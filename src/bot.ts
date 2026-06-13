@@ -15,7 +15,7 @@ import { CobwebStore } from "./db.js";
 import { canUseCobweb, isStoryteller } from "./permissions.js";
 import { formatDiscordTimestamp, submitCobwebMessage } from "./queue.js";
 import { addMinutes } from "./time.js";
-import { CobwebCategory, GuildConfig, GuildSettings } from "./types.js";
+import { GuildConfig, GuildSettings } from "./types.js";
 import {
   assertModerator,
   parseModerationCustomId,
@@ -322,17 +322,14 @@ const handleCommand = async (
   }
 
   const message = interaction.options.getString("message", true);
-  const category = isStCommand
-    ? (interaction.options.getString("category") as CobwebCategory | null)
-    : null;
   const delayMinutes = isStCommand ? (interaction.options.getInteger("delay-minutes") ?? 0) : null;
   const now = new Date();
 
   const submission = {
     guildId: interaction.guildId!,
     submitterId: interaction.user.id,
+    submitterName: member.displayName,
     message,
-    category,
     isStoryteller: storyteller
   };
   const result = submitCobwebMessage(

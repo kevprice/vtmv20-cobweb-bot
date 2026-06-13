@@ -38,8 +38,8 @@ export const submitCobwebMessage = (
     {
       guildId: input.guildId,
       submitterId: input.submitterId,
+      submitterName: input.submitterName,
       text: validation.text,
-      category: input.category ?? null,
       scheduledFor
     },
     now

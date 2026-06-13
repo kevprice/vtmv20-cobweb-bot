@@ -24,6 +24,7 @@ describe("CobwebWorker", () => {
     const queued = store.createQueuedMessage({
       guildId: "guild",
       submitterId: "user",
+      submitterName: "Ariadne",
       text: "The docks remember.",
       scheduledFor: new Date("2026-06-13T12:00:00.000Z")
     });
@@ -48,6 +49,7 @@ describe("CobwebWorker", () => {
     const queued = store.createQueuedMessage({
       guildId: "guild",
       submitterId: "user",
+      submitterName: "Ariadne",
       text: "The docks remember.",
       scheduledFor: new Date("2026-06-13T12:00:00.000Z")
     });

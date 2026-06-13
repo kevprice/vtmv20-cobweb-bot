@@ -26,18 +26,29 @@ export class DiscordPublisher implements Publisher {
   ) {}
 
   async publish(message: QueuedMessage, config: GuildConfig): Promise<void> {
-    const webhook =
-      config.webhookId && config.webhookToken
-        ? new WebhookClient({ id: config.webhookId, token: config.webhookToken })
-        : await this.getOrCreateWebhook(
-            await this.fetchWebhookChannel(config.cobwebChannelId),
-            config
-          );
+    if (config.webhookId && config.webhookToken) {
+      try {
+        await this.sendViaWebhook(
+          new WebhookClient({ id: config.webhookId, token: config.webhookToken }),
+          message
+        );
+        return;
+      } catch (error) {
+        this.saveWebhook?.(config.guildId, null, null);
+        console.warn(
+          `Stored Cobweb webhook failed for guild ${config.guildId}; recreating webhook.`,
+          error
+        );
+      }
+    }
 
-    await webhook.send({
-      content: message.currentText,
-      allowedMentions: { parse: [] }
+    const channel = await this.fetchWebhookChannel(config.cobwebChannelId);
+    const webhook = await this.getOrCreateWebhook(channel, {
+      ...config,
+      webhookId: null,
+      webhookToken: null
     });
+    await this.sendViaWebhook(webhook, message);
   }
 
   private async fetchWebhookChannel(channelId: string): Promise<WebhookCapableChannel> {
@@ -56,7 +67,7 @@ export class DiscordPublisher implements Publisher {
     const webhooks = await channel.fetchWebhooks();
     const existing = webhooks.find((webhook) => webhook.name === config.webhookName);
 
-    if (existing) {
+    if (existing?.token) {
       this.saveWebhook?.(config.guildId, existing.id, existing.token);
       return existing;
     }
@@ -67,6 +78,13 @@ export class DiscordPublisher implements Publisher {
     });
     this.saveWebhook?.(config.guildId, created.id, created.token);
     return created;
+  }
+
+  private async sendViaWebhook(webhook: PublishTarget, message: QueuedMessage): Promise<void> {
+    await webhook.send({
+      content: message.currentText,
+      allowedMentions: { parse: [] }
+    });
   }
 }
 

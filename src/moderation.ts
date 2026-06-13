@@ -38,7 +38,6 @@ export const moderationActionRow = (message: QueuedMessage, disabled = false) =>
 
 export const moderationContent = (message: QueuedMessage): string => {
   const status = message.status.toUpperCase();
-  const category = message.category ?? "none";
   const scheduled = formatDiscordTimestamp(new Date(message.scheduledFor), "f");
   const posted = message.postedAt
     ? `\nPosted: ${formatDiscordTimestamp(new Date(message.postedAt), "f")}`
@@ -47,8 +46,7 @@ export const moderationContent = (message: QueuedMessage): string => {
 
   return [
     `Cobweb queue #${message.id} [${status}]`,
-    `Submitter: <@${message.submitterId}> (${message.submitterId})`,
-    `Category: ${category}`,
+    `Submitter: ${message.submitterName}`,
     `Scheduled: ${scheduled}${posted}${failure}`,
     "",
     "```text",
@@ -168,4 +166,3 @@ export const updateQueuedTextFromModal = (
 
   return updated;
 };
-

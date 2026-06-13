@@ -29,6 +29,7 @@ describe("submitCobwebMessage", () => {
       {
         guildId: "guild",
         submitterId: "user",
+        submitterName: "Ariadne",
         message: "The river remembers.",
         isStoryteller: false
       },
@@ -52,14 +53,26 @@ describe("submitCobwebMessage", () => {
     const first = submitCobwebMessage(
       store,
       guildConfig,
-      { guildId: "guild", submitterId: "user", message: "one", isStoryteller: false },
+      {
+        guildId: "guild",
+        submitterId: "user",
+        submitterName: "Ariadne",
+        message: "one",
+        isStoryteller: false
+      },
       now,
       () => 0
     );
     const second = submitCobwebMessage(
       store,
       guildConfig,
-      { guildId: "guild", submitterId: "user", message: "two", isStoryteller: false },
+      {
+        guildId: "guild",
+        submitterId: "user",
+        submitterName: "Ariadne",
+        message: "two",
+        isStoryteller: false
+      },
       new Date("2026-06-13T12:05:00.000Z"),
       () => 0
     );
@@ -83,6 +96,7 @@ describe("submitCobwebMessage", () => {
       {
         guildId: "guild",
         submitterId: "st-user",
+        submitterName: "Storyteller",
         message: "one",
         isStoryteller: true,
         scheduledFor: now
@@ -95,6 +109,7 @@ describe("submitCobwebMessage", () => {
       {
         guildId: "guild",
         submitterId: "st-user",
+        submitterName: "Storyteller",
         message: "two",
         isStoryteller: true,
         scheduledFor: new Date("2026-06-13T12:05:00.000Z")
@@ -118,14 +133,26 @@ describe("submitCobwebMessage", () => {
     const first = submitCobwebMessage(
       store,
       guildConfig,
-      { guildId: "guild", submitterId: "user", message: "late", isStoryteller: false },
+      {
+        guildId: "guild",
+        submitterId: "user",
+        submitterName: "Ariadne",
+        message: "late",
+        isStoryteller: false
+      },
       new Date("2026-06-13T12:00:00.000Z"),
       () => 0.9
     );
     const second = submitCobwebMessage(
       store,
       guildConfig,
-      { guildId: "guild", submitterId: "user", message: "early", isStoryteller: false },
+      {
+        guildId: "guild",
+        submitterId: "user",
+        submitterName: "Ariadne",
+        message: "early",
+        isStoryteller: false
+      },
       new Date("2026-06-13T12:16:00.000Z"),
       () => 0.1
     );

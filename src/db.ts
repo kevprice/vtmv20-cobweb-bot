@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { dirname } from "node:path";
 import { mkdirSync } from "node:fs";
-import { CobwebCategory, GuildConfig, GuildSettings, QueueStatus, QueuedMessage } from "./types.js";
+import { GuildConfig, GuildSettings, QueueStatus, QueuedMessage } from "./types.js";
 import { isoNow } from "./time.js";
 
 export const DEFAULT_GUILD_SETTINGS = {
@@ -15,9 +15,9 @@ type QueueRow = {
   id: number;
   guild_id: string;
   submitter_id: string;
+  submitter_name: string;
   original_text: string;
   current_text: string;
-  category: CobwebCategory | null;
   scheduled_for: string;
   status: QueueStatus;
   moderation_message_id: string | null;
@@ -47,8 +47,8 @@ type GuildSettingsRow = {
 export type CreateQueuedMessageInput = {
   guildId: string;
   submitterId: string;
+  submitterName: string;
   text: string;
-  category?: CobwebCategory | null;
   scheduledFor: Date;
 };
 
@@ -77,9 +77,9 @@ export class CobwebStore {
         `INSERT INTO queued_messages (
           guild_id,
           submitter_id,
+          submitter_name,
           original_text,
           current_text,
-          category,
           scheduled_for,
           status,
           created_at,
@@ -89,9 +89,9 @@ export class CobwebStore {
       .run(
         input.guildId,
         input.submitterId,
+        input.submitterName,
         input.text,
         input.text,
-        input.category ?? null,
         input.scheduledFor.toISOString(),
         timestamp,
         timestamp
@@ -378,9 +378,9 @@ export class CobwebStore {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         guild_id TEXT NOT NULL,
         submitter_id TEXT NOT NULL,
+        submitter_name TEXT NOT NULL DEFAULT 'Unknown',
         original_text TEXT NOT NULL,
         current_text TEXT NOT NULL,
-        category TEXT,
         scheduled_for TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('pending', 'deleted', 'posted', 'failed')),
         moderation_message_id TEXT,
@@ -413,6 +413,15 @@ export class CobwebStore {
         updated_at TEXT NOT NULL
       );
     `);
+
+    this.addColumnIfMissing("queued_messages", "submitter_name", "TEXT NOT NULL DEFAULT 'Unknown'");
+  }
+
+  private addColumnIfMissing(table: string, column: string, definition: string): void {
+    const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!rows.some((row) => row.name === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
   }
 }
 
@@ -420,9 +429,9 @@ const mapRow = (row: QueueRow): QueuedMessage => ({
   id: row.id,
   guildId: row.guild_id,
   submitterId: row.submitter_id,
+  submitterName: row.submitter_name,
   originalText: row.original_text,
   currentText: row.current_text,
-  category: row.category,
   scheduledFor: row.scheduled_for,
   status: row.status,
   moderationMessageId: row.moderation_message_id,

@@ -3,7 +3,6 @@ import {
   RESTPostAPIChatInputApplicationCommandsJSONBody,
   SlashCommandBuilder
 } from "discord.js";
-import { COBWEB_CATEGORIES } from "./types.js";
 
 export const COBWEB_COMMAND = "cobweb";
 export const COBWEB_ST_COMMAND = "cobweb_st";
@@ -31,16 +30,6 @@ export const commandData = (): RESTPostAPIChatInputApplicationCommandsJSONBody[]
         .setRequired(true)
         .setMaxLength(200)
     )
-    .addStringOption((option) => {
-      option
-        .setName("category")
-        .setDescription("Internal ST-only category.")
-        .setRequired(false);
-      for (const category of COBWEB_CATEGORIES) {
-        option.addChoices({ name: category, value: category });
-      }
-      return option;
-    })
     .addIntegerOption((option) =>
       option
         .setName("delay-minutes")

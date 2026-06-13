@@ -41,13 +41,13 @@ describe("CobwebStore", () => {
     const queued = store.createQueuedMessage({
       guildId: "guild",
       submitterId: "user",
+      submitterName: "Ariadne",
       text: "The mirror coughs.",
-      scheduledFor: new Date("2026-06-13T12:00:00.000Z"),
-      category: "warning"
+      scheduledFor: new Date("2026-06-13T12:00:00.000Z")
     });
 
     expect(queued.status).toBe("pending");
-    expect(queued.category).toBe("warning");
+    expect(queued.submitterName).toBe("Ariadne");
 
     store.setModerationMessageId(queued.id, "message-id");
     const edited = store.editQueuedMessage(queued.id, "The mirror lies.");
@@ -69,6 +69,7 @@ describe("CobwebStore", () => {
     const queued = store.createQueuedMessage({
       guildId: "guild",
       submitterId: "user",
+      submitterName: "Ariadne",
       text: "gone",
       scheduledFor: new Date("2026-06-13T12:00:00.000Z")
     });

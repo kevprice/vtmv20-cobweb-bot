@@ -5,7 +5,7 @@ Cobweb is a Discord bot for a VTM V20 Malkavian-only feed: short anonymous fragm
 ## Features
 
 - `/cobweb message:<text>` for Malkavian players and ST/admin roles.
-- `/cobweb_st message:<text> category?:<type> delay-minutes?:<number>` for ST/admin roles.
+- `/cobweb_st message:<text> delay-minutes?:<number>` for ST/admin roles.
 - Random scheduling within the next configured hour.
 - Player per-user cooldown, defaulting to one submission every 15 minutes.
 - ST/admin posts bypass cooldown and can post immediately or after a chosen delay.
@@ -61,7 +61,7 @@ For the Cobweb feed channel:
 
 - Allow only Malkavian and ST/admin roles to view the channel.
 - Deny `Send Messages`, `Create Public Threads`, `Create Private Threads`, `Add Reactions`, and `Use External Emojis` for everyone except the bot as needed.
-- Let the bot manage webhooks and send messages.
+- Let the bot `Manage Webhooks` and `Send Messages`.
 
 For the moderation channel:
 
@@ -69,6 +69,7 @@ For the moderation channel:
 - This channel receives queued fragments with internal audit metadata and moderation controls.
 
 Discord always displays some sender label. Cobweb uses a webhook named `Cobweb` so the feed never shows the player or ST who submitted the fragment.
+If queued fragments change to `FAILED` at publish time, first verify the bot has `Manage Webhooks` in the configured Cobweb channel and that the channel still exists.
 
 ST/admin submissions are not slow-posted unless the ST chooses a delay with `delay-minutes`. Omitting `delay-minutes` or setting it to `0` queues the fragment for immediate publish after the moderation entry is created.
 
@@ -83,6 +84,8 @@ DATABASE_URL=./data/cobweb.db
 WORKER_INTERVAL_MS=30000
 ```
 
+`DATABASE_URL` is currently a SQLite file path or `file:` URL, not a Postgres connection URL.
+
 Per-server configuration is stored in SQLite, keyed by `guildId`, and managed with `/cwsetup`.
 The database stores channel IDs, role IDs, limits, cooldowns, delay windows, webhook credentials, and blocked terms.
 
@@ -95,5 +98,32 @@ npm run dev
 npm test
 npm run build
 ```
+
+## Railway Deployment
+
+This bot is Railway-ready through `railway.json` and `nixpacks.toml`.
+
+1. Create a new Railway service from this repository.
+2. Add a Railway Volume for persistent SQLite storage.
+3. Mount the volume somewhere like `/data`.
+4. Set Railway variables:
+
+   ```env
+   DISCORD_TOKEN=replace-with-bot-token
+   DISCORD_CLIENT_ID=replace-with-application-client-id
+   DATABASE_URL=/data/cobweb.db
+   WORKER_INTERVAL_MS=30000
+   ```
+
+5. Deploy the service.
+6. Run the command registration once from Railway or locally with the same env:
+
+   ```bash
+   npm run register-commands
+   ```
+
+Railway provides `PORT` automatically. The bot starts a small `/healthz` endpoint on that port so Railway can health-check the worker while the Discord client runs in the same process.
+
+Do not use Railway's Postgres `DATABASE_URL` for this version. The app currently stores its queue and server setup in SQLite, so use a mounted Volume path such as `/data/cobweb.db`.
 
 `/read_cobweb` is intentionally not included in v1. The database keeps posted history so an ST-configurable insight mechanic can be added later.

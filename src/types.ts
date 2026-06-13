@@ -1,14 +1,3 @@
-export const COBWEB_CATEGORIES = [
-  "prophecy",
-  "noise",
-  "plot_hint",
-  "red_herring",
-  "memory",
-  "warning"
-] as const;
-
-export type CobwebCategory = (typeof COBWEB_CATEGORIES)[number];
-
 export type QueueStatus = "pending" | "deleted" | "posted" | "failed";
 
 export type GuildConfig = {
@@ -47,9 +36,9 @@ export type QueuedMessage = {
   id: number;
   guildId: string;
   submitterId: string;
+  submitterName: string;
   originalText: string;
   currentText: string;
-  category: CobwebCategory | null;
   scheduledFor: string;
   status: QueueStatus;
   moderationMessageId: string | null;
@@ -62,8 +51,8 @@ export type QueuedMessage = {
 export type SubmissionInput = {
   guildId: string;
   submitterId: string;
+  submitterName: string;
   message: string;
-  category?: CobwebCategory | null;
   isStoryteller: boolean;
   scheduledFor?: Date;
 };

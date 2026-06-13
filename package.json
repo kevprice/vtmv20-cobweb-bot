@@ -8,6 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
+    "railway:register-commands": "npm run register-commands",
     "register-commands": "tsx src/register-commands.ts",
     "test": "vitest run"
   },
@@ -27,4 +28,3 @@
     "vitest": "^2.1.8"
   }
 }
-
