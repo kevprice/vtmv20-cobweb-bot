@@ -2,9 +2,12 @@ import {
   ButtonInteraction,
   ChatInputCommandInteraction,
   Client,
+  Events,
   GatewayIntentBits,
   GuildMember,
   Interaction,
+  InteractionReplyOptions,
+  MessageFlags,
   ModalSubmitInteraction,
   Partials,
   PermissionFlagsBits
@@ -12,6 +15,12 @@ import {
 import { AppConfig } from "./config.js";
 import { COBWEB_COMMAND, COBWEB_ST_COMMAND, CWSETUP_COMMAND } from "./commands.js";
 import { CobwebStore } from "./db.js";
+import {
+  diagnoseCobwebChannel,
+  diagnoseModerationChannel,
+  formatChannelDiagnostic,
+  setupMissingFields
+} from "./diagnostics.js";
 import { canUseCobweb, isStoryteller } from "./permissions.js";
 import { formatDiscordTimestamp, submitCobwebMessage } from "./queue.js";
 import { addMinutes } from "./time.js";
@@ -47,22 +56,19 @@ export const startBot = async (config: AppConfig, store: CobwebStore): Promise<C
     config.workerIntervalMs
   );
 
-  client.once("ready", () => {
+  client.once(Events.ClientReady, () => {
     console.log(`Cobweb bot logged in as ${client.user?.tag ?? "unknown"}`);
     worker.start();
   });
 
-  client.on("interactionCreate", async (interaction) => {
+  client.on(Events.InteractionCreate, async (interaction) => {
     try {
       await handleInteraction(interaction, store, worker);
     } catch (error) {
       console.error("Interaction failed", error);
-      if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
-        await interaction.reply({
-          content: "The Cobweb shivers and refuses the fragment. Try again later.",
-          ephemeral: true
-        });
-      }
+      await safeRespondEphemeral(interaction, {
+        content: "The Cobweb shivers and refuses the fragment. Try again later."
+      });
     }
   });
 
@@ -77,9 +83,13 @@ const handleInteraction = async (
   store: CobwebStore,
   worker: CobwebWorker
 ): Promise<void> => {
+  if (interaction.isChatInputCommand()) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  }
+
   if (!interaction.guildId) {
     if (interaction.isRepliable()) {
-      await interaction.reply({ content: "Cobweb commands only work inside a server.", ephemeral: true });
+      await respondEphemeral(interaction, { content: "Cobweb commands only work inside a server." });
     }
     return;
   }
@@ -92,10 +102,9 @@ const handleInteraction = async (
 
     const config = store.getRunnableGuildConfig(interaction.guildId);
     if (!config) {
-      await interaction.reply({
+      await respondEphemeral(interaction, {
         content:
-          "This server is not fully configured for the Cobweb. Use `/cwsetup show` to see what is missing.",
-        ephemeral: true
+          "This server is not fully configured for the Cobweb. Use `/cwsetup show` to see what is missing."
       });
       return;
     }
@@ -107,9 +116,8 @@ const handleInteraction = async (
   const config = store.getRunnableGuildConfig(interaction.guildId);
   if (!config) {
     if (interaction.isRepliable()) {
-      await interaction.reply({
-        content: "This server is not fully configured for the Cobweb.",
-        ephemeral: true
+      await respondEphemeral(interaction, {
+        content: "This server is not fully configured for the Cobweb."
       });
     }
     return;
@@ -128,6 +136,56 @@ const handleInteraction = async (
 const getGuildMember = (interaction: Interaction): GuildMember | null =>
   interaction.member instanceof GuildMember ? interaction.member : null;
 
+const respondEphemeral = async (
+  interaction: Interaction,
+  options: Omit<InteractionReplyOptions, "flags" | "ephemeral">
+): Promise<void> => {
+  if (!interaction.isRepliable()) {
+    return;
+  }
+
+  if (interaction.deferred || interaction.replied) {
+    const editOptions: Parameters<typeof interaction.editReply>[0] = {};
+    if (options.content !== undefined) editOptions.content = options.content;
+    if (options.embeds !== undefined) editOptions.embeds = options.embeds;
+    if (options.components !== undefined) editOptions.components = options.components;
+    if (options.files !== undefined) editOptions.files = options.files;
+    if (options.allowedMentions !== undefined) {
+      editOptions.allowedMentions = options.allowedMentions;
+    }
+
+    await interaction.editReply(editOptions);
+    return;
+  }
+
+  await interaction.reply({
+    ...options,
+    flags: MessageFlags.Ephemeral
+  });
+};
+
+const safeRespondEphemeral = async (
+  interaction: Interaction,
+  options: Omit<InteractionReplyOptions, "flags" | "ephemeral">
+): Promise<void> => {
+  try {
+    await respondEphemeral(interaction, options);
+  } catch (error) {
+    if (isUnknownInteractionError(error)) {
+      console.warn("Could not respond because Discord already expired the interaction.");
+      return;
+    }
+
+    throw error;
+  }
+};
+
+const isUnknownInteractionError = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  (error as { code?: unknown }).code === 10062;
+
 const hasSetupPermission = (member: GuildMember, config: GuildConfig | null): boolean =>
   member.permissions.has(PermissionFlagsBits.ManageGuild) ||
   member.permissions.has(PermissionFlagsBits.Administrator) ||
@@ -139,15 +197,14 @@ const handleSetupCommand = async (
 ): Promise<void> => {
   const member = getGuildMember(interaction);
   if (!member || !interaction.guildId) {
-    await interaction.reply({ content: "Could not read your server roles.", ephemeral: true });
+    await respondEphemeral(interaction, { content: "Could not read your server roles." });
     return;
   }
 
   const runnableConfig = store.getRunnableGuildConfig(interaction.guildId);
   if (!hasSetupPermission(member, runnableConfig)) {
-    await interaction.reply({
-      content: "Only server managers or configured ST/admin roles can change Cobweb setup.",
-      ephemeral: true
+    await respondEphemeral(interaction, {
+      content: "Only server managers or configured ST/admin roles can change Cobweb setup."
     });
     return;
   }
@@ -162,9 +219,8 @@ const handleSetupCommand = async (
       subcommand === "add"
         ? store.addBlockedTerm(interaction.guildId, term)
         : store.removeBlockedTerm(interaction.guildId, term);
-    await interaction.reply({
-      content: formatSetupResponse(settings, `Blocked terms updated.`),
-      ephemeral: true,
+    await respondEphemeral(interaction, {
+      content: await formatSetupResponse(interaction, settings, `Blocked terms updated.`),
       allowedMentions: { parse: [] }
     });
     return;
@@ -174,9 +230,12 @@ const handleSetupCommand = async (
     case "cobweb-channel": {
       const channel = interaction.options.getChannel("channel", true);
       settings = store.setGuildChannel(interaction.guildId, "cobwebChannelId", channel.id);
-      await interaction.reply({
-        content: formatSetupResponse(settings, `Cobweb channel set to <#${channel.id}>.`),
-        ephemeral: true,
+      await respondEphemeral(interaction, {
+        content: await formatSetupResponse(
+          interaction,
+          settings,
+          `Cobweb channel set to <#${channel.id}>.`
+        ),
         allowedMentions: { parse: [] }
       });
       return;
@@ -184,9 +243,12 @@ const handleSetupCommand = async (
     case "moderation-channel": {
       const channel = interaction.options.getChannel("channel", true);
       settings = store.setGuildChannel(interaction.guildId, "moderationChannelId", channel.id);
-      await interaction.reply({
-        content: formatSetupResponse(settings, `Moderation channel set to <#${channel.id}>.`),
-        ephemeral: true,
+      await respondEphemeral(interaction, {
+        content: await formatSetupResponse(
+          interaction,
+          settings,
+          `Moderation channel set to <#${channel.id}>.`
+        ),
         allowedMentions: { parse: [] }
       });
       return;
@@ -194,9 +256,12 @@ const handleSetupCommand = async (
     case "malkavian-role": {
       const role = interaction.options.getRole("role", true);
       settings = store.addGuildRole(interaction.guildId, "malkavianRoleIds", role.id);
-      await interaction.reply({
-        content: formatSetupResponse(settings, `Malkavian role added: <@&${role.id}>.`),
-        ephemeral: true,
+      await respondEphemeral(interaction, {
+        content: await formatSetupResponse(
+          interaction,
+          settings,
+          `Malkavian role added: <@&${role.id}>.`
+        ),
         allowedMentions: { parse: [] }
       });
       return;
@@ -204,9 +269,12 @@ const handleSetupCommand = async (
     case "st-role": {
       const role = interaction.options.getRole("role", true);
       settings = store.addGuildRole(interaction.guildId, "stRoleIds", role.id);
-      await interaction.reply({
-        content: formatSetupResponse(settings, `ST/admin role added: <@&${role.id}>.`),
-        ephemeral: true,
+      await respondEphemeral(interaction, {
+        content: await formatSetupResponse(
+          interaction,
+          settings,
+          `ST/admin role added: <@&${role.id}>.`
+        ),
         allowedMentions: { parse: [] }
       });
       return;
@@ -214,9 +282,8 @@ const handleSetupCommand = async (
     case "max-length": {
       const value = interaction.options.getInteger("characters", true);
       settings = store.setGuildNumber(interaction.guildId, "maxLength", value);
-      await interaction.reply({
-        content: formatSetupResponse(settings, `Max length set to ${value}.`),
-        ephemeral: true,
+      await respondEphemeral(interaction, {
+        content: await formatSetupResponse(interaction, settings, `Max length set to ${value}.`),
         allowedMentions: { parse: [] }
       });
       return;
@@ -224,9 +291,12 @@ const handleSetupCommand = async (
     case "cooldown": {
       const value = interaction.options.getInteger("minutes", true);
       settings = store.setGuildNumber(interaction.guildId, "cooldownMinutes", value);
-      await interaction.reply({
-        content: formatSetupResponse(settings, `Cooldown set to ${value} minutes.`),
-        ephemeral: true,
+      await respondEphemeral(interaction, {
+        content: await formatSetupResponse(
+          interaction,
+          settings,
+          `Cooldown set to ${value} minutes.`
+        ),
         allowedMentions: { parse: [] }
       });
       return;
@@ -234,29 +304,47 @@ const handleSetupCommand = async (
     case "delay-window": {
       const value = interaction.options.getInteger("minutes", true);
       settings = store.setGuildNumber(interaction.guildId, "delayWindowMinutes", value);
-      await interaction.reply({
-        content: formatSetupResponse(settings, `Delay window set to ${value} minutes.`),
-        ephemeral: true,
+      await respondEphemeral(interaction, {
+        content: await formatSetupResponse(
+          interaction,
+          settings,
+          `Delay window set to ${value} minutes.`
+        ),
         allowedMentions: { parse: [] }
       });
       return;
     }
     case "show": {
       settings = store.ensureGuildSettings(interaction.guildId);
-      await interaction.reply({
-        content: formatSetupResponse(settings),
-        ephemeral: true,
+      await respondEphemeral(interaction, {
+        content: await formatSetupResponse(interaction, settings),
         allowedMentions: { parse: [] }
       });
       return;
     }
     default:
-      await interaction.reply({ content: "Unknown setup command.", ephemeral: true });
+      await respondEphemeral(interaction, { content: "Unknown setup command." });
   }
 };
 
-const formatSetupResponse = (settings: GuildSettings, prefix?: string): string => {
+const formatSetupResponse = async (
+  interaction: ChatInputCommandInteraction,
+  settings: GuildSettings,
+  prefix?: string
+): Promise<string> => {
   const missing = setupMissingFields(settings);
+  const cobwebChannel = settings.cobwebChannelId
+    ? await safeFetchGuildTextChannel(interaction.client, settings.cobwebChannelId)
+    : null;
+  const moderationChannel = settings.moderationChannelId
+    ? await safeFetchGuildTextChannel(interaction.client, settings.moderationChannelId)
+    : null;
+  const cobwebDiagnostic = settings.cobwebChannelId
+    ? formatChannelDiagnostic(diagnoseCobwebChannel(cobwebChannel, interaction.client.user))
+    : "Cobweb permissions: channel not set";
+  const moderationDiagnostic = settings.moderationChannelId
+    ? formatChannelDiagnostic(diagnoseModerationChannel(moderationChannel, interaction.client.user))
+    : "Moderation permissions: channel not set";
   const lines = [
     ...(prefix ? [prefix, ""] : []),
     "Cobweb setup:",
@@ -272,6 +360,10 @@ const formatSetupResponse = (settings: GuildSettings, prefix?: string): string =
     `Webhook: ${settings.webhookId ? "stored" : `${settings.webhookName} will be created on first publish`}`,
     `Blocked terms: ${settings.blockedTerms.length ? settings.blockedTerms.join(", ") : "none"}`,
     "",
+    "Setup health:",
+    cobwebDiagnostic,
+    moderationDiagnostic,
+    "",
     missing.length
       ? `Missing before Cobweb can run: ${missing.join(", ")}`
       : "Cobweb is ready for this server."
@@ -280,17 +372,19 @@ const formatSetupResponse = (settings: GuildSettings, prefix?: string): string =
   return lines.join("\n");
 };
 
+const safeFetchGuildTextChannel = async (
+  client: Client,
+  channelId: string
+): Promise<Awaited<ReturnType<typeof fetchGuildTextChannel>>> => {
+  try {
+    return await fetchGuildTextChannel(client, channelId);
+  } catch {
+    return null;
+  }
+};
+
 const formatRoleList = (roleIds: string[]): string =>
   roleIds.length ? roleIds.map((roleId) => `<@&${roleId}>`).join(", ") : "not set";
-
-const setupMissingFields = (settings: GuildSettings): string[] => {
-  const missing: string[] = [];
-  if (!settings.cobwebChannelId) missing.push("cobweb channel");
-  if (!settings.moderationChannelId) missing.push("moderation channel");
-  if (settings.malkavianRoleIds.length === 0) missing.push("Malkavian role");
-  if (settings.stRoleIds.length === 0) missing.push("ST/admin role");
-  return missing;
-};
 
 const handleCommand = async (
   interaction: ChatInputCommandInteraction,
@@ -300,7 +394,7 @@ const handleCommand = async (
 ): Promise<void> => {
   const member = getGuildMember(interaction);
   if (!member) {
-    await interaction.reply({ content: "Could not read your server roles.", ephemeral: true });
+    await respondEphemeral(interaction, { content: "Could not read your server roles." });
     return;
   }
 
@@ -312,12 +406,12 @@ const handleCommand = async (
   }
 
   if (isStCommand && !storyteller) {
-    await interaction.reply({ content: "Only ST/admin roles can use `/cobweb_st`.", ephemeral: true });
+    await respondEphemeral(interaction, { content: "Only ST/admin roles can use `/cobweb_st`." });
     return;
   }
 
   if (!canUseCobweb(member, config)) {
-    await interaction.reply({ content: "The Cobweb is closed to you.", ephemeral: true });
+    await respondEphemeral(interaction, { content: "The Cobweb is closed to you." });
     return;
   }
 
@@ -342,16 +436,15 @@ const handleCommand = async (
   );
 
   if (!result.ok) {
-    await interaction.reply({ content: result.reason, ephemeral: true });
+    await respondEphemeral(interaction, { content: result.reason });
     return;
   }
 
   const moderationChannel = await fetchGuildTextChannel(interaction.client, config.moderationChannelId);
   if (!moderationChannel) {
     store.deleteQueuedMessage(result.queued.id);
-    await interaction.reply({
-      content: "The moderation channel is not available, so the fragment was not queued.",
-      ephemeral: true
+    await respondEphemeral(interaction, {
+      content: "The moderation channel is not available, so the fragment was not queued."
     });
     return;
   }
@@ -363,11 +456,12 @@ const handleCommand = async (
     throw error;
   }
 
-  await interaction.reply({
-    content: `The Cobweb has taken it. It may surface ${formatDiscordTimestamp(
-      new Date(result.queued.scheduledFor)
-    )}.`,
-    ephemeral: true
+  await respondEphemeral(interaction, {
+    content: isStCommand
+      ? `The Cobweb has taken it. It may surface ${formatDiscordTimestamp(
+          new Date(result.queued.scheduledFor)
+        )}.`
+      : "The Cobweb has received it. It will surface when it is ready."
   });
 
   if (isStCommand && delayMinutes === 0) {
@@ -392,7 +486,7 @@ const handleButton = async (
 
   const message = store.getQueuedMessage(parsed.id);
   if (!message || message.status !== "pending") {
-    await interaction.reply({ content: "That fragment is no longer pending.", ephemeral: true });
+    await respondEphemeral(interaction, { content: "That fragment is no longer pending." });
     return;
   }
 
@@ -434,7 +528,7 @@ const handleModal = async (
   );
 
   if ("reason" in result) {
-    await interaction.reply({ content: result.reason, ephemeral: true });
+    await respondEphemeral(interaction, { content: result.reason });
     return;
   }
 
@@ -443,5 +537,5 @@ const handleModal = async (
     await refreshModerationEntry(moderationChannel, result);
   }
 
-  await interaction.reply({ content: "The fragment has shifted.", ephemeral: true });
+  await respondEphemeral(interaction, { content: "The fragment has shifted." });
 };

@@ -44,7 +44,7 @@ describe("CobwebWorker", () => {
     store.close();
   });
 
-  it("marks failed publishes retryable", async () => {
+  it("marks failed publishes retryable with actionable permission text", async () => {
     const store = new CobwebStore();
     const queued = store.createQueuedMessage({
       guildId: "guild",
@@ -53,7 +53,11 @@ describe("CobwebWorker", () => {
       text: "The docks remember.",
       scheduledFor: new Date("2026-06-13T12:00:00.000Z")
     });
-    const publisher: Publisher = { publish: vi.fn().mockRejectedValue(new Error("no webhook")) };
+    const publisher: Publisher = {
+      publish: vi
+        .fn()
+        .mockRejectedValue(new Error("Bot is missing Manage Webhooks in #cobweb"))
+    };
     const worker = new CobwebWorker(
       store,
       () => config,
@@ -66,7 +70,7 @@ describe("CobwebWorker", () => {
 
     const failed = store.getQueuedMessage(queued.id);
     expect(failed?.status).toBe("failed");
-    expect(failed?.failureReason).toBe("no webhook");
+    expect(failed?.failureReason).toBe("Bot is missing Manage Webhooks in #cobweb");
     expect(store.listDueMessages(new Date("2026-06-13T12:02:00.000Z"))).toHaveLength(1);
     store.close();
   });

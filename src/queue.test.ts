@@ -80,7 +80,7 @@ describe("submitCobwebMessage", () => {
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(false);
     if (!second.ok) {
-      expect(second.reason).toContain("The Cobweb will listen again");
+      expect(second.reason).toBe("The Cobweb is still full of your last whisper. Try again later.");
     }
 
     store.close();

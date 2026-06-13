@@ -26,7 +26,7 @@ export const submitCobwebMessage = (
       if (nextAllowed > now) {
         return {
           ok: false,
-          reason: `The Cobweb will listen again around ${formatDiscordTimestamp(nextAllowed)}.`
+          reason: "The Cobweb is still full of your last whisper. Try again later."
         };
       }
     }

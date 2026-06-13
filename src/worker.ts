@@ -2,6 +2,7 @@ import {
   Channel,
   Client,
   GuildTextBasedChannel,
+  PermissionFlagsBits,
   WebhookClient,
   Webhook
 } from "discord.js";
@@ -57,6 +58,11 @@ export class DiscordPublisher implements Publisher {
       throw new Error(`Channel ${channelId} cannot publish Cobweb webhooks`);
     }
 
+    const missing = this.missingCobwebPermissions(channel);
+    if (missing.length > 0) {
+      throw new Error(`Bot is missing ${missing.join(", ")} in #${channel.name}`);
+    }
+
     return channel;
   }
 
@@ -64,7 +70,12 @@ export class DiscordPublisher implements Publisher {
     channel: WebhookCapableChannel,
     config: GuildConfig
   ): Promise<PublishTarget> {
-    const webhooks = await channel.fetchWebhooks();
+    let webhooks: Awaited<ReturnType<WebhookCapableChannel["fetchWebhooks"]>>;
+    try {
+      webhooks = await channel.fetchWebhooks();
+    } catch (error) {
+      throw new Error(`Bot cannot inspect webhooks in #${channel.name}: ${formatDiscordError(error)}`);
+    }
     const existing = webhooks.find((webhook) => webhook.name === config.webhookName);
 
     if (existing?.token) {
@@ -72,19 +83,50 @@ export class DiscordPublisher implements Publisher {
       return existing;
     }
 
-    const created = await channel.createWebhook({
-      name: config.webhookName,
-      reason: "Cobweb anonymous feed publisher"
-    });
+    let created: Awaited<ReturnType<WebhookCapableChannel["createWebhook"]>>;
+    try {
+      created = await channel.createWebhook({
+        name: config.webhookName,
+        reason: "Cobweb anonymous feed publisher"
+      });
+    } catch (error) {
+      throw new Error(`Bot cannot create Cobweb webhook in #${channel.name}: ${formatDiscordError(error)}`);
+    }
     this.saveWebhook?.(config.guildId, created.id, created.token);
     return created;
   }
 
   private async sendViaWebhook(webhook: PublishTarget, message: QueuedMessage): Promise<void> {
-    await webhook.send({
-      content: message.currentText,
-      allowedMentions: { parse: [] }
-    });
+    try {
+      await webhook.send({
+        content: message.currentText,
+        allowedMentions: { parse: [] }
+      });
+    } catch (error) {
+      throw new Error(`Bot cannot send through the Cobweb webhook: ${formatDiscordError(error)}`);
+    }
+  }
+
+  private missingCobwebPermissions(channel: WebhookCapableChannel): string[] {
+    const botUser = this.client.user;
+    if (!botUser) {
+      return ["bot user unavailable"];
+    }
+
+    const permissions = channel.permissionsFor(botUser);
+    if (!permissions) {
+      return ["permissions unavailable"];
+    }
+
+    const requirements = [
+      { label: "View Channel", flag: PermissionFlagsBits.ViewChannel },
+      { label: "Send Messages", flag: PermissionFlagsBits.SendMessages },
+      { label: "Manage Webhooks", flag: PermissionFlagsBits.ManageWebhooks }
+    ] as const;
+
+    return requirements
+      .filter((requirement) => !permissions.has(requirement.flag))
+      .map((requirement) => requirement.label);
   }
 }
 
@@ -170,6 +212,7 @@ export const fetchGuildTextChannel = async (
 };
 
 type WebhookCapableChannel = GuildTextBasedChannel & {
+  name: string;
   fetchWebhooks(): ReturnType<Extract<GuildTextBasedChannel, { fetchWebhooks: unknown }>["fetchWebhooks"]>;
   createWebhook(
     options: Parameters<Extract<GuildTextBasedChannel, { createWebhook: unknown }>["createWebhook"]>[0]
@@ -184,3 +227,11 @@ const isWebhookCapableChannel = (channel: Channel | null): channel is WebhookCap
       "fetchWebhooks" in channel &&
       "createWebhook" in channel
   );
+
+const formatDiscordError = (error: unknown): string => {
+  if (typeof error === "object" && error !== null && "message" in error) {
+    return String((error as { message?: unknown }).message);
+  }
+
+  return String(error);
+};

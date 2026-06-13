@@ -70,6 +70,7 @@ For the moderation channel:
 
 Discord always displays some sender label. Cobweb uses a webhook named `Cobweb` so the feed never shows the player or ST who submitted the fragment.
 If queued fragments change to `FAILED` at publish time, first verify the bot has `Manage Webhooks` in the configured Cobweb channel and that the channel still exists.
+`/cwsetup show` reports Cobweb and moderation channel permission health, including missing `Manage Webhooks`, `Send Messages`, `View Channel`, or `Read Message History`.
 
 ST/admin submissions are not slow-posted unless the ST chooses a delay with `delay-minutes`. Omitting `delay-minutes` or setting it to `0` queues the fragment for immediate publish after the moderation entry is created.
 

@@ -5,6 +5,7 @@ import {
   ButtonStyle,
   ChatInputCommandInteraction,
   GuildTextBasedChannel,
+  MessageFlags,
   ModalBuilder,
   ModalSubmitInteraction,
   TextInputBuilder,
@@ -143,7 +144,7 @@ export const assertModerator = async (
 
   await interaction.reply({
     content: "Only ST/admin roles can touch the moderation queue.",
-    ephemeral: true
+    flags: MessageFlags.Ephemeral
   });
   return false;
 };
