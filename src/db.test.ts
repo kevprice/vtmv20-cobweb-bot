@@ -2,6 +2,40 @@ import { describe, expect, it } from "vitest";
 import { CobwebStore } from "./db.js";
 
 describe("CobwebStore", () => {
+  it("persists guild setup and returns runnable config when required fields exist", () => {
+    const store = new CobwebStore();
+
+    let settings = store.ensureGuildSettings("guild");
+    expect(settings.maxLength).toBe(180);
+    expect(store.getRunnableGuildConfig("guild")).toBeNull();
+
+    settings = store.setGuildChannel("guild", "cobwebChannelId", "feed");
+    settings = store.setGuildChannel("guild", "moderationChannelId", "mod");
+    settings = store.addGuildRole("guild", "malkavianRoleIds", "malk");
+    settings = store.addGuildRole("guild", "stRoleIds", "st");
+    settings = store.setGuildNumber("guild", "maxLength", 140);
+    settings = store.addBlockedTerm("guild", "Victor Temple");
+    settings = store.setGuildWebhook("guild", "webhook-id", "webhook-token");
+
+    expect(settings.blockedTerms).toEqual(["Victor Temple"]);
+    expect(settings.webhookId).toBe("webhook-id");
+
+    const runnable = store.getRunnableGuildConfig("guild");
+    expect(runnable).toMatchObject({
+      guildId: "guild",
+      cobwebChannelId: "feed",
+      moderationChannelId: "mod",
+      malkavianRoleIds: ["malk"],
+      stRoleIds: ["st"],
+      maxLength: 140,
+      webhookId: "webhook-id",
+      webhookToken: "webhook-token",
+      blockedTerms: ["Victor Temple"]
+    });
+
+    store.close();
+  });
+
   it("tracks queue lifecycle", () => {
     const store = new CobwebStore();
     const queued = store.createQueuedMessage({
@@ -45,4 +79,3 @@ describe("CobwebStore", () => {
     store.close();
   });
 });
-

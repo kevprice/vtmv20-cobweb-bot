@@ -16,11 +16,23 @@ export type Publisher = {
 };
 
 export class DiscordPublisher implements Publisher {
-  constructor(private readonly client: Client) {}
+  constructor(
+    private readonly client: Client,
+    private readonly saveWebhook?: (
+      guildId: string,
+      webhookId: string | null,
+      webhookToken: string | null
+    ) => void
+  ) {}
 
   async publish(message: QueuedMessage, config: GuildConfig): Promise<void> {
-    const channel = await this.fetchWebhookChannel(config.cobwebChannelId);
-    const webhook = await this.getOrCreateWebhook(channel, config.webhookName);
+    const webhook =
+      config.webhookId && config.webhookToken
+        ? new WebhookClient({ id: config.webhookId, token: config.webhookToken })
+        : await this.getOrCreateWebhook(
+            await this.fetchWebhookChannel(config.cobwebChannelId),
+            config
+          );
 
     await webhook.send({
       content: message.currentText,
@@ -39,19 +51,22 @@ export class DiscordPublisher implements Publisher {
 
   private async getOrCreateWebhook(
     channel: WebhookCapableChannel,
-    webhookName: string
+    config: GuildConfig
   ): Promise<PublishTarget> {
     const webhooks = await channel.fetchWebhooks();
-    const existing = webhooks.find((webhook) => webhook.name === webhookName);
+    const existing = webhooks.find((webhook) => webhook.name === config.webhookName);
 
     if (existing) {
+      this.saveWebhook?.(config.guildId, existing.id, existing.token);
       return existing;
     }
 
-    return channel.createWebhook({
-      name: webhookName,
+    const created = await channel.createWebhook({
+      name: config.webhookName,
       reason: "Cobweb anonymous feed publisher"
     });
+    this.saveWebhook?.(config.guildId, created.id, created.token);
+    return created;
   }
 }
 
@@ -60,7 +75,7 @@ export class CobwebWorker {
 
   constructor(
     private readonly store: CobwebStore,
-    private readonly configs: Map<string, GuildConfig>,
+    private readonly getConfig: (guildId: string) => GuildConfig | null,
     private readonly publisher: Publisher,
     private readonly fetchModerationChannel: (
       channelId: string
@@ -93,7 +108,7 @@ export class CobwebWorker {
     const due = this.store.listDueMessages(now);
 
     for (const message of due) {
-      const config = this.configs.get(message.guildId);
+      const config = this.getConfig(message.guildId);
       if (!config) {
         this.store.markFailed(message.id, `No guild config for ${message.guildId}`);
         continue;

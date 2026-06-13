@@ -5,12 +5,14 @@ Cobweb is a Discord bot for a VTM V20 Malkavian-only feed: short anonymous fragm
 ## Features
 
 - `/cobweb message:<text>` for Malkavian players and ST/admin roles.
-- `/cobweb_st message:<text> category?:<type>` for ST/admin roles.
+- `/cobweb_st message:<text> category?:<type> delay-minutes?:<number>` for ST/admin roles.
 - Random scheduling within the next configured hour.
-- Per-user cooldown, defaulting to one submission every 15 minutes.
+- Player per-user cooldown, defaulting to one submission every 15 minutes.
+- ST/admin posts bypass cooldown and can post immediately or after a chosen delay.
 - SQLite-backed queue that survives restarts.
 - Private moderation-channel entries with Edit and Delete controls.
 - Webhook publishing as `Cobweb`, with no submitter name and no mention pings.
+- Discord-native `/cwsetup` commands for per-server configuration stored in SQLite.
 
 ## Setup
 
@@ -24,8 +26,7 @@ Cobweb is a Discord bot for a VTM V20 Malkavian-only feed: short anonymous fragm
 
    - `DISCORD_TOKEN`
    - `DISCORD_CLIENT_ID`
-   - `GUILD_CONFIGS`
-   - optional `DATABASE_PATH` and `WORKER_INTERVAL_MS`
+   - optional `DATABASE_URL` and `WORKER_INTERVAL_MS`
 
 3. Register slash commands:
 
@@ -38,6 +39,20 @@ Cobweb is a Discord bot for a VTM V20 Malkavian-only feed: short anonymous fragm
    ```bash
    npm run build
    npm start
+   ```
+
+5. In each Discord server, a user with `Manage Server` or `Administrator` runs:
+
+   ```text
+   /cwsetup cobweb-channel channel:#cobweb
+   /cwsetup moderation-channel channel:#cobweb-mod
+   /cwsetup malkavian-role role:@Malkavian
+   /cwsetup st-role role:@Storyteller
+   /cwsetup max-length characters:180
+   /cwsetup cooldown minutes:15
+   /cwsetup delay-window minutes:60
+   /cwsetup blocked-term add term:"Victor Temple"
+   /cwsetup show
    ```
 
 ## Discord Permissions
@@ -55,28 +70,23 @@ For the moderation channel:
 
 Discord always displays some sender label. Cobweb uses a webhook named `Cobweb` so the feed never shows the player or ST who submitted the fragment.
 
+ST/admin submissions are not slow-posted unless the ST chooses a delay with `delay-minutes`. Omitting `delay-minutes` or setting it to `0` queues the fragment for immediate publish after the moderation entry is created.
+
 ## Configuration
 
-`GUILD_CONFIGS` is a JSON array:
+Environment variables are only for secrets and global runtime settings:
 
-```json
-[
-  {
-    "guildId": "123456789012345678",
-    "cobwebChannelId": "123456789012345678",
-    "moderationChannelId": "123456789012345678",
-    "malkavianRoleIds": ["123456789012345678"],
-    "stRoleIds": ["123456789012345678"],
-    "maxLength": 180,
-    "cooldownMinutes": 15,
-    "delayWindowMinutes": 60,
-    "webhookName": "Cobweb",
-    "blockedTerms": ["Victor Temple"]
-  }
-]
+```env
+DISCORD_TOKEN=replace-with-bot-token
+DISCORD_CLIENT_ID=replace-with-application-client-id
+DATABASE_URL=./data/cobweb.db
+WORKER_INTERVAL_MS=30000
 ```
 
-`blockedTerms` is a light guardrail for character names. It rejects submissions containing configured terms before they enter the queue.
+Per-server configuration is stored in SQLite, keyed by `guildId`, and managed with `/cwsetup`.
+The database stores channel IDs, role IDs, limits, cooldowns, delay windows, webhook credentials, and blocked terms.
+
+`/cwsetup blocked-term add` is a light guardrail for character names. It rejects submissions containing configured terms before they enter the queue.
 
 ## Development
 
@@ -87,4 +97,3 @@ npm run build
 ```
 
 `/read_cobweb` is intentionally not included in v1. The database keeps posted history so an ST-configurable insight mechanic can be added later.
-

@@ -7,10 +7,7 @@ const config = loadConfig();
 const rest = new REST({ version: "10" }).setToken(config.discordToken);
 const commands = commandData();
 
-for (const guild of config.guilds) {
-  await rest.put(Routes.applicationGuildCommands(config.discordClientId, guild.guildId), {
-    body: commands
-  });
-  console.log(`Registered Cobweb commands for guild ${guild.guildId}`);
-}
-
+await rest.put(Routes.applicationCommands(config.discordClientId), {
+  body: commands
+});
+console.log("Registered global Cobweb commands.");

@@ -21,14 +21,27 @@ export type GuildConfig = {
   cooldownMinutes: number;
   delayWindowMinutes: number;
   webhookName: string;
+  webhookId: string | null;
+  webhookToken: string | null;
   blockedTerms: string[];
 };
 
-export type RawGuildConfig = Partial<GuildConfig> &
-  Pick<GuildConfig, "guildId" | "cobwebChannelId" | "moderationChannelId"> & {
-    malkavianRoleIds?: string[];
-    stRoleIds?: string[];
-  };
+export type GuildSettings = {
+  guildId: string;
+  cobwebChannelId: string | null;
+  moderationChannelId: string | null;
+  malkavianRoleIds: string[];
+  stRoleIds: string[];
+  maxLength: number;
+  cooldownMinutes: number;
+  delayWindowMinutes: number;
+  webhookName: string;
+  webhookId: string | null;
+  webhookToken: string | null;
+  blockedTerms: string[];
+  createdAt: string;
+  updatedAt: string;
+};
 
 export type QueuedMessage = {
   id: number;
@@ -52,5 +65,5 @@ export type SubmissionInput = {
   message: string;
   category?: CobwebCategory | null;
   isStoryteller: boolean;
+  scheduledFor?: Date;
 };
-

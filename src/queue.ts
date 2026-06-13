@@ -19,18 +19,21 @@ export const submitCobwebMessage = (
     return validation;
   }
 
-  const last = store.getLastAcceptedSubmission(input.guildId, input.submitterId, now);
-  if (last) {
-    const nextAllowed = addMinutes(new Date(last.createdAt), config.cooldownMinutes);
-    if (nextAllowed > now) {
-      return {
-        ok: false,
-        reason: `The Cobweb will listen again around ${formatDiscordTimestamp(nextAllowed)}.`
-      };
+  if (!input.isStoryteller) {
+    const last = store.getLastAcceptedSubmission(input.guildId, input.submitterId, now);
+    if (last) {
+      const nextAllowed = addMinutes(new Date(last.createdAt), config.cooldownMinutes);
+      if (nextAllowed > now) {
+        return {
+          ok: false,
+          reason: `The Cobweb will listen again around ${formatDiscordTimestamp(nextAllowed)}.`
+        };
+      }
     }
   }
 
-  const scheduledFor = randomScheduledDate(now, config.delayWindowMinutes, random);
+  const scheduledFor =
+    input.scheduledFor ?? randomScheduledDate(now, config.delayWindowMinutes, random);
   const queued = store.createQueuedMessage(
     {
       guildId: input.guildId,
@@ -47,4 +50,3 @@ export const submitCobwebMessage = (
 
 export const formatDiscordTimestamp = (date: Date, style: "R" | "f" = "R"): string =>
   `<t:${Math.floor(date.getTime() / 1000)}:${style}>`;
-

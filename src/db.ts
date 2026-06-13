@@ -1,8 +1,15 @@
 import Database from "better-sqlite3";
 import { dirname } from "node:path";
 import { mkdirSync } from "node:fs";
-import { CobwebCategory, QueueStatus, QueuedMessage } from "./types.js";
+import { CobwebCategory, GuildConfig, GuildSettings, QueueStatus, QueuedMessage } from "./types.js";
 import { isoNow } from "./time.js";
+
+export const DEFAULT_GUILD_SETTINGS = {
+  maxLength: 180,
+  cooldownMinutes: 15,
+  delayWindowMinutes: 60,
+  webhookName: "Cobweb"
+} as const;
 
 type QueueRow = {
   id: number;
@@ -18,6 +25,23 @@ type QueueRow = {
   updated_at: string;
   posted_at: string | null;
   failure_reason: string | null;
+};
+
+type GuildSettingsRow = {
+  guild_id: string;
+  cobweb_channel_id: string | null;
+  moderation_channel_id: string | null;
+  malkavian_role_ids: string;
+  st_role_ids: string;
+  max_length: number;
+  cooldown_minutes: number;
+  delay_window_minutes: number;
+  webhook_name: string;
+  webhook_id: string | null;
+  webhook_token: string | null;
+  blocked_terms: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type CreateQueuedMessageInput = {
@@ -74,6 +98,176 @@ export class CobwebStore {
       );
 
     return this.getQueuedMessage(Number(result.lastInsertRowid))!;
+  }
+
+  ensureGuildSettings(guildId: string, now = new Date()): GuildSettings {
+    const existing = this.getGuildSettings(guildId);
+    if (existing) {
+      return existing;
+    }
+
+    const timestamp = isoNow(now);
+    this.db
+      .prepare(
+        `INSERT INTO guild_settings (
+          guild_id,
+          malkavian_role_ids,
+          st_role_ids,
+          max_length,
+          cooldown_minutes,
+          delay_window_minutes,
+          webhook_name,
+          blocked_terms,
+          created_at,
+          updated_at
+        ) VALUES (?, '[]', '[]', ?, ?, ?, ?, '[]', ?, ?)`
+      )
+      .run(
+        guildId,
+        DEFAULT_GUILD_SETTINGS.maxLength,
+        DEFAULT_GUILD_SETTINGS.cooldownMinutes,
+        DEFAULT_GUILD_SETTINGS.delayWindowMinutes,
+        DEFAULT_GUILD_SETTINGS.webhookName,
+        timestamp,
+        timestamp
+      );
+
+    return this.getGuildSettings(guildId)!;
+  }
+
+  getGuildSettings(guildId: string): GuildSettings | null {
+    const row = this.db.prepare("SELECT * FROM guild_settings WHERE guild_id = ?").get(guildId) as
+      | GuildSettingsRow
+      | undefined;
+    return row ? mapGuildSettingsRow(row) : null;
+  }
+
+  getRunnableGuildConfig(guildId: string): GuildConfig | null {
+    const settings = this.getGuildSettings(guildId);
+    if (
+      !settings?.cobwebChannelId ||
+      !settings.moderationChannelId ||
+      settings.malkavianRoleIds.length === 0 ||
+      settings.stRoleIds.length === 0
+    ) {
+      return null;
+    }
+
+    return {
+      guildId: settings.guildId,
+      cobwebChannelId: settings.cobwebChannelId,
+      moderationChannelId: settings.moderationChannelId,
+      malkavianRoleIds: settings.malkavianRoleIds,
+      stRoleIds: settings.stRoleIds,
+      maxLength: settings.maxLength,
+      cooldownMinutes: settings.cooldownMinutes,
+      delayWindowMinutes: settings.delayWindowMinutes,
+      webhookName: settings.webhookName,
+      webhookId: settings.webhookId,
+      webhookToken: settings.webhookToken,
+      blockedTerms: settings.blockedTerms
+    };
+  }
+
+  listRunnableGuildConfigs(): GuildConfig[] {
+    const rows = this.db.prepare("SELECT guild_id FROM guild_settings").all() as Array<{
+      guild_id: string;
+    }>;
+
+    return rows
+      .map((row) => this.getRunnableGuildConfig(row.guild_id))
+      .filter((config): config is GuildConfig => Boolean(config));
+  }
+
+  setGuildChannel(
+    guildId: string,
+    field: "cobwebChannelId" | "moderationChannelId",
+    channelId: string,
+    now = new Date()
+  ): GuildSettings {
+    this.ensureGuildSettings(guildId, now);
+    const column = field === "cobwebChannelId" ? "cobweb_channel_id" : "moderation_channel_id";
+    this.db
+      .prepare(`UPDATE guild_settings SET ${column} = ?, updated_at = ? WHERE guild_id = ?`)
+      .run(channelId, isoNow(now), guildId);
+    return this.getGuildSettings(guildId)!;
+  }
+
+  addGuildRole(
+    guildId: string,
+    field: "malkavianRoleIds" | "stRoleIds",
+    roleId: string,
+    now = new Date()
+  ): GuildSettings {
+    const settings = this.ensureGuildSettings(guildId, now);
+    const values = field === "malkavianRoleIds" ? settings.malkavianRoleIds : settings.stRoleIds;
+    const nextValues = values.includes(roleId) ? values : [...values, roleId];
+    const column = field === "malkavianRoleIds" ? "malkavian_role_ids" : "st_role_ids";
+    this.db
+      .prepare(`UPDATE guild_settings SET ${column} = ?, updated_at = ? WHERE guild_id = ?`)
+      .run(JSON.stringify(nextValues), isoNow(now), guildId);
+    return this.getGuildSettings(guildId)!;
+  }
+
+  setGuildNumber(
+    guildId: string,
+    field: "maxLength" | "cooldownMinutes" | "delayWindowMinutes",
+    value: number,
+    now = new Date()
+  ): GuildSettings {
+    this.ensureGuildSettings(guildId, now);
+    const column =
+      field === "maxLength"
+        ? "max_length"
+        : field === "cooldownMinutes"
+          ? "cooldown_minutes"
+          : "delay_window_minutes";
+    this.db
+      .prepare(`UPDATE guild_settings SET ${column} = ?, updated_at = ? WHERE guild_id = ?`)
+      .run(Math.floor(value), isoNow(now), guildId);
+    return this.getGuildSettings(guildId)!;
+  }
+
+  addBlockedTerm(guildId: string, term: string, now = new Date()): GuildSettings {
+    const settings = this.ensureGuildSettings(guildId, now);
+    const normalized = term.trim();
+    const exists = settings.blockedTerms.some(
+      (blocked) => blocked.toLocaleLowerCase() === normalized.toLocaleLowerCase()
+    );
+    const nextTerms = exists || normalized.length === 0 ? settings.blockedTerms : [...settings.blockedTerms, normalized];
+    this.db
+      .prepare("UPDATE guild_settings SET blocked_terms = ?, updated_at = ? WHERE guild_id = ?")
+      .run(JSON.stringify(nextTerms), isoNow(now), guildId);
+    return this.getGuildSettings(guildId)!;
+  }
+
+  removeBlockedTerm(guildId: string, term: string, now = new Date()): GuildSettings {
+    const settings = this.ensureGuildSettings(guildId, now);
+    const lowered = term.trim().toLocaleLowerCase();
+    const nextTerms = settings.blockedTerms.filter(
+      (blocked) => blocked.toLocaleLowerCase() !== lowered
+    );
+    this.db
+      .prepare("UPDATE guild_settings SET blocked_terms = ?, updated_at = ? WHERE guild_id = ?")
+      .run(JSON.stringify(nextTerms), isoNow(now), guildId);
+    return this.getGuildSettings(guildId)!;
+  }
+
+  setGuildWebhook(
+    guildId: string,
+    webhookId: string | null,
+    webhookToken: string | null,
+    now = new Date()
+  ): GuildSettings {
+    this.ensureGuildSettings(guildId, now);
+    this.db
+      .prepare(
+        `UPDATE guild_settings
+         SET webhook_id = ?, webhook_token = ?, updated_at = ?
+         WHERE guild_id = ?`
+      )
+      .run(webhookId, webhookToken, isoNow(now), guildId);
+    return this.getGuildSettings(guildId)!;
   }
 
   getQueuedMessage(id: number): QueuedMessage | null {
@@ -201,6 +395,23 @@ export class CobwebStore {
 
       CREATE INDEX IF NOT EXISTS idx_queued_messages_cooldown
         ON queued_messages(guild_id, submitter_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS guild_settings (
+        guild_id TEXT PRIMARY KEY,
+        cobweb_channel_id TEXT,
+        moderation_channel_id TEXT,
+        malkavian_role_ids TEXT NOT NULL DEFAULT '[]',
+        st_role_ids TEXT NOT NULL DEFAULT '[]',
+        max_length INTEGER NOT NULL DEFAULT 180,
+        cooldown_minutes INTEGER NOT NULL DEFAULT 15,
+        delay_window_minutes INTEGER NOT NULL DEFAULT 60,
+        webhook_name TEXT NOT NULL DEFAULT 'Cobweb',
+        webhook_id TEXT,
+        webhook_token TEXT,
+        blocked_terms TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
 }
@@ -221,3 +432,30 @@ const mapRow = (row: QueueRow): QueuedMessage => ({
   failureReason: row.failure_reason
 });
 
+const parseStringArray = (value: string): string[] => {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === "string")
+      : [];
+  } catch {
+    return [];
+  }
+};
+
+const mapGuildSettingsRow = (row: GuildSettingsRow): GuildSettings => ({
+  guildId: row.guild_id,
+  cobwebChannelId: row.cobweb_channel_id,
+  moderationChannelId: row.moderation_channel_id,
+  malkavianRoleIds: parseStringArray(row.malkavian_role_ids),
+  stRoleIds: parseStringArray(row.st_role_ids),
+  maxLength: row.max_length,
+  cooldownMinutes: row.cooldown_minutes,
+  delayWindowMinutes: row.delay_window_minutes,
+  webhookName: row.webhook_name,
+  webhookId: row.webhook_id,
+  webhookToken: row.webhook_token,
+  blockedTerms: parseStringArray(row.blocked_terms),
+  createdAt: row.created_at,
+  updatedAt: row.updated_at
+});

@@ -13,6 +13,8 @@ const guildConfig: GuildConfig = {
   cooldownMinutes: 15,
   delayWindowMinutes: 60,
   webhookName: "Cobweb",
+  webhookId: null,
+  webhookToken: null,
   blockedTerms: []
 };
 
@@ -71,6 +73,45 @@ describe("submitCobwebMessage", () => {
     store.close();
   });
 
+  it("does not enforce cooldown for storyteller submissions", () => {
+    const store = new CobwebStore();
+    const now = new Date("2026-06-13T12:00:00.000Z");
+
+    const first = submitCobwebMessage(
+      store,
+      guildConfig,
+      {
+        guildId: "guild",
+        submitterId: "st-user",
+        message: "one",
+        isStoryteller: true,
+        scheduledFor: now
+      },
+      now
+    );
+    const second = submitCobwebMessage(
+      store,
+      guildConfig,
+      {
+        guildId: "guild",
+        submitterId: "st-user",
+        message: "two",
+        isStoryteller: true,
+        scheduledFor: new Date("2026-06-13T12:05:00.000Z")
+      },
+      new Date("2026-06-13T12:01:00.000Z")
+    );
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    if (first.ok && second.ok) {
+      expect(first.queued.scheduledFor).toBe("2026-06-13T12:00:00.000Z");
+      expect(second.queued.scheduledFor).toBe("2026-06-13T12:05:00.000Z");
+    }
+
+    store.close();
+  });
+
   it("allows out-of-order scheduling after cooldown", () => {
     const store = new CobwebStore();
 
@@ -100,4 +141,3 @@ describe("submitCobwebMessage", () => {
     store.close();
   });
 });
-

@@ -6,14 +6,16 @@ import {
   GuildMember,
   Interaction,
   ModalSubmitInteraction,
-  Partials
+  Partials,
+  PermissionFlagsBits
 } from "discord.js";
 import { AppConfig } from "./config.js";
-import { COBWEB_COMMAND, COBWEB_ST_COMMAND } from "./commands.js";
+import { COBWEB_COMMAND, COBWEB_ST_COMMAND, CWSETUP_COMMAND } from "./commands.js";
 import { CobwebStore } from "./db.js";
 import { canUseCobweb, isStoryteller } from "./permissions.js";
 import { formatDiscordTimestamp, submitCobwebMessage } from "./queue.js";
-import { CobwebCategory, GuildConfig } from "./types.js";
+import { addMinutes } from "./time.js";
+import { CobwebCategory, GuildConfig, GuildSettings } from "./types.js";
 import {
   assertModerator,
   parseModerationCustomId,
@@ -35,11 +37,12 @@ export const createClient = (): Client =>
 
 export const startBot = async (config: AppConfig, store: CobwebStore): Promise<Client> => {
   const client = createClient();
-  const guildConfigs = new Map(config.guilds.map((guild) => [guild.guildId, guild]));
   const worker = new CobwebWorker(
     store,
-    guildConfigs,
-    new DiscordPublisher(client),
+    (guildId) => store.getRunnableGuildConfig(guildId),
+    new DiscordPublisher(client, (guildId, webhookId, webhookToken) => {
+      store.setGuildWebhook(guildId, webhookId, webhookToken);
+    }),
     (channelId) => fetchGuildTextChannel(client, channelId),
     config.workerIntervalMs
   );
@@ -51,7 +54,7 @@ export const startBot = async (config: AppConfig, store: CobwebStore): Promise<C
 
   client.on("interactionCreate", async (interaction) => {
     try {
-      await handleInteraction(interaction, store, guildConfigs);
+      await handleInteraction(interaction, store, worker);
     } catch (error) {
       console.error("Interaction failed", error);
       if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
@@ -72,7 +75,7 @@ export const startBot = async (config: AppConfig, store: CobwebStore): Promise<C
 const handleInteraction = async (
   interaction: Interaction,
   store: CobwebStore,
-  guildConfigs: Map<string, GuildConfig>
+  worker: CobwebWorker
 ): Promise<void> => {
   if (!interaction.guildId) {
     if (interaction.isRepliable()) {
@@ -81,16 +84,34 @@ const handleInteraction = async (
     return;
   }
 
-  const config = guildConfigs.get(interaction.guildId);
-  if (!config) {
-    if (interaction.isRepliable()) {
-      await interaction.reply({ content: "This server is not configured for the Cobweb.", ephemeral: true });
+  if (interaction.isChatInputCommand()) {
+    if (interaction.commandName === CWSETUP_COMMAND) {
+      await handleSetupCommand(interaction, store);
+      return;
     }
+
+    const config = store.getRunnableGuildConfig(interaction.guildId);
+    if (!config) {
+      await interaction.reply({
+        content:
+          "This server is not fully configured for the Cobweb. Use `/cwsetup show` to see what is missing.",
+        ephemeral: true
+      });
+      return;
+    }
+
+    await handleCommand(interaction, store, config, worker);
     return;
   }
 
-  if (interaction.isChatInputCommand()) {
-    await handleCommand(interaction, store, config);
+  const config = store.getRunnableGuildConfig(interaction.guildId);
+  if (!config) {
+    if (interaction.isRepliable()) {
+      await interaction.reply({
+        content: "This server is not fully configured for the Cobweb.",
+        ephemeral: true
+      });
+    }
     return;
   }
 
@@ -107,10 +128,175 @@ const handleInteraction = async (
 const getGuildMember = (interaction: Interaction): GuildMember | null =>
   interaction.member instanceof GuildMember ? interaction.member : null;
 
+const hasSetupPermission = (member: GuildMember, config: GuildConfig | null): boolean =>
+  member.permissions.has(PermissionFlagsBits.ManageGuild) ||
+  member.permissions.has(PermissionFlagsBits.Administrator) ||
+  Boolean(config && isStoryteller(member, config));
+
+const handleSetupCommand = async (
+  interaction: ChatInputCommandInteraction,
+  store: CobwebStore
+): Promise<void> => {
+  const member = getGuildMember(interaction);
+  if (!member || !interaction.guildId) {
+    await interaction.reply({ content: "Could not read your server roles.", ephemeral: true });
+    return;
+  }
+
+  const runnableConfig = store.getRunnableGuildConfig(interaction.guildId);
+  if (!hasSetupPermission(member, runnableConfig)) {
+    await interaction.reply({
+      content: "Only server managers or configured ST/admin roles can change Cobweb setup.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  const subcommandGroup = interaction.options.getSubcommandGroup(false);
+  const subcommand = interaction.options.getSubcommand();
+  let settings: GuildSettings;
+
+  if (subcommandGroup === "blocked-term") {
+    const term = interaction.options.getString("term", true);
+    settings =
+      subcommand === "add"
+        ? store.addBlockedTerm(interaction.guildId, term)
+        : store.removeBlockedTerm(interaction.guildId, term);
+    await interaction.reply({
+      content: formatSetupResponse(settings, `Blocked terms updated.`),
+      ephemeral: true,
+      allowedMentions: { parse: [] }
+    });
+    return;
+  }
+
+  switch (subcommand) {
+    case "cobweb-channel": {
+      const channel = interaction.options.getChannel("channel", true);
+      settings = store.setGuildChannel(interaction.guildId, "cobwebChannelId", channel.id);
+      await interaction.reply({
+        content: formatSetupResponse(settings, `Cobweb channel set to <#${channel.id}>.`),
+        ephemeral: true,
+        allowedMentions: { parse: [] }
+      });
+      return;
+    }
+    case "moderation-channel": {
+      const channel = interaction.options.getChannel("channel", true);
+      settings = store.setGuildChannel(interaction.guildId, "moderationChannelId", channel.id);
+      await interaction.reply({
+        content: formatSetupResponse(settings, `Moderation channel set to <#${channel.id}>.`),
+        ephemeral: true,
+        allowedMentions: { parse: [] }
+      });
+      return;
+    }
+    case "malkavian-role": {
+      const role = interaction.options.getRole("role", true);
+      settings = store.addGuildRole(interaction.guildId, "malkavianRoleIds", role.id);
+      await interaction.reply({
+        content: formatSetupResponse(settings, `Malkavian role added: <@&${role.id}>.`),
+        ephemeral: true,
+        allowedMentions: { parse: [] }
+      });
+      return;
+    }
+    case "st-role": {
+      const role = interaction.options.getRole("role", true);
+      settings = store.addGuildRole(interaction.guildId, "stRoleIds", role.id);
+      await interaction.reply({
+        content: formatSetupResponse(settings, `ST/admin role added: <@&${role.id}>.`),
+        ephemeral: true,
+        allowedMentions: { parse: [] }
+      });
+      return;
+    }
+    case "max-length": {
+      const value = interaction.options.getInteger("characters", true);
+      settings = store.setGuildNumber(interaction.guildId, "maxLength", value);
+      await interaction.reply({
+        content: formatSetupResponse(settings, `Max length set to ${value}.`),
+        ephemeral: true,
+        allowedMentions: { parse: [] }
+      });
+      return;
+    }
+    case "cooldown": {
+      const value = interaction.options.getInteger("minutes", true);
+      settings = store.setGuildNumber(interaction.guildId, "cooldownMinutes", value);
+      await interaction.reply({
+        content: formatSetupResponse(settings, `Cooldown set to ${value} minutes.`),
+        ephemeral: true,
+        allowedMentions: { parse: [] }
+      });
+      return;
+    }
+    case "delay-window": {
+      const value = interaction.options.getInteger("minutes", true);
+      settings = store.setGuildNumber(interaction.guildId, "delayWindowMinutes", value);
+      await interaction.reply({
+        content: formatSetupResponse(settings, `Delay window set to ${value} minutes.`),
+        ephemeral: true,
+        allowedMentions: { parse: [] }
+      });
+      return;
+    }
+    case "show": {
+      settings = store.ensureGuildSettings(interaction.guildId);
+      await interaction.reply({
+        content: formatSetupResponse(settings),
+        ephemeral: true,
+        allowedMentions: { parse: [] }
+      });
+      return;
+    }
+    default:
+      await interaction.reply({ content: "Unknown setup command.", ephemeral: true });
+  }
+};
+
+const formatSetupResponse = (settings: GuildSettings, prefix?: string): string => {
+  const missing = setupMissingFields(settings);
+  const lines = [
+    ...(prefix ? [prefix, ""] : []),
+    "Cobweb setup:",
+    `Cobweb channel: ${settings.cobwebChannelId ? `<#${settings.cobwebChannelId}>` : "not set"}`,
+    `Moderation channel: ${
+      settings.moderationChannelId ? `<#${settings.moderationChannelId}>` : "not set"
+    }`,
+    `Malkavian roles: ${formatRoleList(settings.malkavianRoleIds)}`,
+    `ST/admin roles: ${formatRoleList(settings.stRoleIds)}`,
+    `Max length: ${settings.maxLength}`,
+    `Cooldown: ${settings.cooldownMinutes} minutes`,
+    `Delay window: ${settings.delayWindowMinutes} minutes`,
+    `Webhook: ${settings.webhookId ? "stored" : `${settings.webhookName} will be created on first publish`}`,
+    `Blocked terms: ${settings.blockedTerms.length ? settings.blockedTerms.join(", ") : "none"}`,
+    "",
+    missing.length
+      ? `Missing before Cobweb can run: ${missing.join(", ")}`
+      : "Cobweb is ready for this server."
+  ];
+
+  return lines.join("\n");
+};
+
+const formatRoleList = (roleIds: string[]): string =>
+  roleIds.length ? roleIds.map((roleId) => `<@&${roleId}>`).join(", ") : "not set";
+
+const setupMissingFields = (settings: GuildSettings): string[] => {
+  const missing: string[] = [];
+  if (!settings.cobwebChannelId) missing.push("cobweb channel");
+  if (!settings.moderationChannelId) missing.push("moderation channel");
+  if (settings.malkavianRoleIds.length === 0) missing.push("Malkavian role");
+  if (settings.stRoleIds.length === 0) missing.push("ST/admin role");
+  return missing;
+};
+
 const handleCommand = async (
   interaction: ChatInputCommandInteraction,
   store: CobwebStore,
-  config: GuildConfig
+  config: GuildConfig,
+  worker: CobwebWorker
 ): Promise<void> => {
   const member = getGuildMember(interaction);
   if (!member) {
@@ -139,14 +325,24 @@ const handleCommand = async (
   const category = isStCommand
     ? (interaction.options.getString("category") as CobwebCategory | null)
     : null;
+  const delayMinutes = isStCommand ? (interaction.options.getInteger("delay-minutes") ?? 0) : null;
+  const now = new Date();
 
-  const result = submitCobwebMessage(store, config, {
+  const submission = {
     guildId: interaction.guildId!,
     submitterId: interaction.user.id,
     message,
     category,
     isStoryteller: storyteller
-  });
+  };
+  const result = submitCobwebMessage(
+    store,
+    config,
+    isStCommand
+      ? { ...submission, scheduledFor: addMinutes(now, delayMinutes ?? 0) }
+      : submission,
+    now
+  );
 
   if (!result.ok) {
     await interaction.reply({ content: result.reason, ephemeral: true });
@@ -176,6 +372,10 @@ const handleCommand = async (
     )}.`,
     ephemeral: true
   });
+
+  if (isStCommand && delayMinutes === 0) {
+    await worker.tick(new Date());
+  }
 };
 
 const handleButton = async (
@@ -248,4 +448,3 @@ const handleModal = async (
 
   await interaction.reply({ content: "The fragment has shifted.", ephemeral: true });
 };
-

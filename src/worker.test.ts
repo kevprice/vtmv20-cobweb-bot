@@ -13,6 +13,8 @@ const config: GuildConfig = {
   cooldownMinutes: 15,
   delayWindowMinutes: 60,
   webhookName: "Cobweb",
+  webhookId: null,
+  webhookToken: null,
   blockedTerms: []
 };
 
@@ -28,7 +30,7 @@ describe("CobwebWorker", () => {
     const publisher: Publisher = { publish: vi.fn().mockResolvedValue(undefined) };
     const worker = new CobwebWorker(
       store,
-      new Map([["guild", config]]),
+      () => config,
       publisher,
       async () => null,
       30_000
@@ -52,7 +54,7 @@ describe("CobwebWorker", () => {
     const publisher: Publisher = { publish: vi.fn().mockRejectedValue(new Error("no webhook")) };
     const worker = new CobwebWorker(
       store,
-      new Map([["guild", config]]),
+      () => config,
       publisher,
       async () => null,
       30_000
@@ -67,4 +69,3 @@ describe("CobwebWorker", () => {
     store.close();
   });
 });
-
