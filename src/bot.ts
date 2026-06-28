@@ -13,6 +13,7 @@ import {
   GuildMember,
   Interaction,
   InteractionReplyOptions,
+  Message,
   MessageFlags,
   ModalBuilder,
   ModalSubmitInteraction,
@@ -51,7 +52,11 @@ import { CobwebWorker, DiscordPublisher, fetchGuildTextChannel } from "./worker.
 
 export const createClient = (): Client =>
   new Client({
-    intents: [GatewayIntentBits.Guilds],
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent
+    ],
     partials: [Partials.Channel]
   });
 
@@ -83,10 +88,107 @@ export const startBot = async (config: AppConfig, store: CobwebStore): Promise<C
     }
   });
 
+  client.on(Events.MessageCreate, async (message) => {
+    try {
+      await handleCobwebChannelMessage(message, store, worker);
+    } catch (error) {
+      console.error("Cobweb channel message interception failed", error);
+      await safeDirectMessage(
+        message,
+        "The Cobweb could not take that message. Please try `/cobweb` instead."
+      );
+    }
+  });
+
   client.once("shardDisconnect", () => worker.stop());
 
   await client.login(config.discordToken);
   return client;
+};
+
+const handleCobwebChannelMessage = async (
+  message: Message,
+  store: CobwebStore,
+  worker: CobwebWorker
+): Promise<void> => {
+  if (!message.inGuild() || message.author.bot || message.webhookId) return;
+
+  const config = store.getRunnableGuildConfig(message.guildId);
+  if (!config || !message.member) return;
+  const isMalkavian = config.malkavianRoleIds.some((roleId) =>
+    message.member!.roles.cache.has(roleId)
+  );
+  const storyteller = isStoryteller(message.member, config);
+  const isCobwebChannel = message.channelId === config.cobwebChannelId;
+  const isModerationChannel = message.channelId === config.moderationChannelId;
+  if (!(isCobwebChannel && (isMalkavian || storyteller)) && !(isModerationChannel && storyteller)) {
+    return;
+  }
+
+  try {
+    await message.delete();
+  } catch (error) {
+    console.error(`Could not delete intercepted Cobweb message ${message.id}`, error);
+    await safeDirectMessage(
+      message,
+      "I could not hide your message, so it was not added to the Cobweb queue. Please alert a Storyteller."
+    );
+    return;
+  }
+
+  const result = submitCobwebMessage(
+    store,
+    config,
+    {
+      guildId: message.guildId,
+      submitterId: message.author.id,
+      submitterName: message.member.displayName,
+      message: message.content,
+      isStoryteller: storyteller,
+      ...(storyteller ? { scheduledFor: message.createdAt } : {})
+    },
+    message.createdAt
+  );
+  if (!result.ok) {
+    await safeDirectMessage(message, result.reason);
+    return;
+  }
+
+  const moderationChannel = await fetchGuildTextChannel(message.client, config.moderationChannelId);
+  if (!moderationChannel) {
+    store.deleteQueuedMessage(result.queued.id);
+    await safeDirectMessage(
+      message,
+      "The moderation channel is unavailable, so your message was not queued."
+    );
+    return;
+  }
+
+  try {
+    await postModerationEntry(store, moderationChannel, result.queued);
+  } catch (error) {
+    store.deleteQueuedMessage(result.queued.id);
+    throw error;
+  }
+
+  if (storyteller) {
+    await worker.tick(new Date());
+  }
+
+  await safeDirectMessage(
+    message,
+    storyteller
+      ? "The Cobweb has taken your Storyteller message and queued it for immediate publication."
+      : "The Cobweb has received your message. It will surface when it is ready."
+  );
+};
+
+const safeDirectMessage = async (message: Message, content: string): Promise<void> => {
+  try {
+    await message.author.send({ content, allowedMentions: { parse: [] } });
+  } catch {
+    // Direct messages may be disabled; interception and queueing should still succeed.
+  }
 };
 
 const handleInteraction = async (

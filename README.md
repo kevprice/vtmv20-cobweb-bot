@@ -3,14 +3,10 @@
 Cobweb is a Discord bot for a VTM V20 Malkavian-only feed: short anonymous fragments, delayed delivery, and an admin moderation queue before the words reach the channel.
 
 
-## standard discord setup, create the private channels #cobweb and #cobweb-mod 
-## install the bot and have an admin or moderator run the following slash commands:
+## standard discord setup, create the private channels #cobweb and #cobweb-mod
+## install the bot and have an admin or moderator open the setup panel:
 ```
-/cwsetup cobweb-channel channel:#cobweb
-/cwsetup moderation-channel channel:#cobweb-mod
-/cwsetup malkavian-role role:@Malkavian
-/cwsetup st-role role:@Storyteller
-/cwsetup show
+/cwsetup
 ```
 
 Replace the tags and channel names with whatever you are using
@@ -19,7 +15,9 @@ Invite the bot into #cobweb and cobweb-mod
 ## Features
 
 - `/cobweb message:<text>` for Malkavian players and ST/admin roles.
+- Messages typed by Malkavian players directly in the configured Cobweb channel are deleted and submitted through the same queue automatically.
 - `/cobweb_st message:<text> delay-minutes?:<number>` for ST/admin roles.
+- Messages typed by Storytellers in either the Cobweb or moderation channel are deleted and treated like immediate `/cobweb_st` submissions.
 - Random scheduling within the next configured hour.
 - Player per-user cooldown, defaulting to one submission every 15 minutes.
 - ST/admin posts bypass cooldown and can post immediately or after a chosen delay.
@@ -41,6 +39,8 @@ Invite the bot into #cobweb and cobweb-mod
    - `DISCORD_TOKEN`
    - `DISCORD_CLIENT_ID`
    - optional `DATABASE_URL` and `WORKER_INTERVAL_MS`
+
+   In the Discord Developer Portal, enable the bot's **Message Content Intent**.
 
 3. Register slash commands:
 
@@ -66,17 +66,19 @@ Invite the bot into #cobweb and cobweb-mod
 For the Cobweb feed channel:
 
 - Allow only Malkavian and ST/admin roles to view the channel.
-- Deny `Send Messages`, `Create Public Threads`, `Create Private Threads`, `Add Reactions`, and `Use External Emojis` for everyone except the bot as needed.
-- Let the bot `Manage Webhooks` and `Send Messages`.
+- Allow Malkavian roles to `Send Messages` so the bot can intercept their fragments.
+- Let the bot `Manage Messages`, `Manage Webhooks`, and `Send Messages`.
+- Deny `Create Public Threads`, `Create Private Threads`, `Add Reactions`, and `Use External Emojis` as needed.
 
 For the moderation channel:
 
 - Allow only ST/admin roles and the bot to view it.
+- Allow ST/admin roles to `Send Messages`, and let the bot `Manage Messages` so those posts can be intercepted safely.
 - This channel receives queued fragments with internal audit metadata and moderation controls.
 
 Discord always displays some sender label. Cobweb uses a webhook named `Cobweb` so the feed never shows the player or ST who submitted the fragment.
 If queued fragments change to `FAILED` at publish time, first verify the bot has `Manage Webhooks` in the configured Cobweb channel and that the channel still exists.
-`/cwsetup` opens a private setup panel with channel and multi-role pickers. Its limits and filters button configures message length, cooldown, delay window, and blocked terms. The panel also reports channel permission health, including missing `Manage Webhooks`, `Send Messages`, `View Channel`, or `Read Message History`.
+`/cwsetup` opens a private setup panel with channel and multi-role pickers. Its limits and filters button configures message length, cooldown, delay window, and blocked terms. The panel also reports channel permission health, including missing `Manage Messages`, `Manage Webhooks`, `Send Messages`, `View Channel`, or `Read Message History`.
 
 ST/admin submissions are not slow-posted unless the ST chooses a delay with `delay-minutes`. Omitting `delay-minutes` or setting it to `0` queues the fragment for immediate publish after the moderation entry is created.
 

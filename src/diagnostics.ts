@@ -19,12 +19,14 @@ export type ChannelDiagnostic = {
 export const cobwebPermissionRequirements = [
   { label: "View Channel", flag: PermissionFlagsBits.ViewChannel },
   { label: "Send Messages", flag: PermissionFlagsBits.SendMessages },
+  { label: "Manage Messages", flag: PermissionFlagsBits.ManageMessages },
   { label: "Manage Webhooks", flag: PermissionFlagsBits.ManageWebhooks }
 ] as const;
 
 export const moderationPermissionRequirements = [
   { label: "View Channel", flag: PermissionFlagsBits.ViewChannel },
   { label: "Send Messages", flag: PermissionFlagsBits.SendMessages },
+  { label: "Manage Messages", flag: PermissionFlagsBits.ManageMessages },
   { label: "Read Message History", flag: PermissionFlagsBits.ReadMessageHistory }
 ] as const;
 
