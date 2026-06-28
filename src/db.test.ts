@@ -13,11 +13,12 @@ describe("CobwebStore", () => {
     settings = store.setGuildChannel("guild", "moderationChannelId", "mod");
     settings = store.addGuildRole("guild", "malkavianRoleIds", "malk");
     settings = store.addGuildRole("guild", "stRoleIds", "st");
+    settings = store.setGuildRoles("guild", "malkavianRoleIds", ["malk", "malk-2", "malk"]);
     settings = store.setGuildNumber("guild", "maxLength", 140);
-    settings = store.addBlockedTerm("guild", "Victor Temple");
+    settings = store.setBlockedTerms("guild", ["Victor Temple", "victor temple", "  Janus  "]);
     settings = store.setGuildWebhook("guild", "webhook-id", "webhook-token");
 
-    expect(settings.blockedTerms).toEqual(["Victor Temple"]);
+    expect(settings.blockedTerms).toEqual(["Victor Temple", "Janus"]);
     expect(settings.webhookId).toBe("webhook-id");
 
     const runnable = store.getRunnableGuildConfig("guild");
@@ -25,12 +26,12 @@ describe("CobwebStore", () => {
       guildId: "guild",
       cobwebChannelId: "feed",
       moderationChannelId: "mod",
-      malkavianRoleIds: ["malk"],
+      malkavianRoleIds: ["malk", "malk-2"],
       stRoleIds: ["st"],
       maxLength: 140,
       webhookId: "webhook-id",
       webhookToken: "webhook-token",
-      blockedTerms: ["Victor Temple"]
+      blockedTerms: ["Victor Temple", "Janus"]
     });
 
     store.close();

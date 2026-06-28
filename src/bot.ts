@@ -1,5 +1,11 @@
 import {
+  ActionRowBuilder,
+  ButtonBuilder,
   ButtonInteraction,
+  ButtonStyle,
+  ChannelSelectMenuBuilder,
+  ChannelSelectMenuInteraction,
+  ChannelType,
   ChatInputCommandInteraction,
   Client,
   Events,
@@ -8,9 +14,14 @@ import {
   Interaction,
   InteractionReplyOptions,
   MessageFlags,
+  ModalBuilder,
   ModalSubmitInteraction,
   Partials,
-  PermissionFlagsBits
+  PermissionFlagsBits,
+  RoleSelectMenuBuilder,
+  RoleSelectMenuInteraction,
+  TextInputBuilder,
+  TextInputStyle
 } from "discord.js";
 import { AppConfig } from "./config.js";
 import { COBWEB_COMMAND, COBWEB_ST_COMMAND, CWSETUP_COMMAND } from "./commands.js";
@@ -104,12 +115,32 @@ const handleInteraction = async (
     if (!config) {
       await respondEphemeral(interaction, {
         content:
-          "This server is not fully configured for the Cobweb. Use `/cwsetup show` to see what is missing."
+          "This server is not fully configured for the Cobweb. Use `/cwsetup` to finish setup."
       });
       return;
     }
 
     await handleCommand(interaction, store, config, worker);
+    return;
+  }
+
+  if (interaction.isChannelSelectMenu() && interaction.customId.startsWith("cwsetup:")) {
+    await handleSetupChannelSelect(interaction, store);
+    return;
+  }
+
+  if (interaction.isRoleSelectMenu() && interaction.customId.startsWith("cwsetup:")) {
+    await handleSetupRoleSelect(interaction, store);
+    return;
+  }
+
+  if (interaction.isButton() && interaction.customId === SETUP_SETTINGS_BUTTON_ID) {
+    await handleSetupSettingsButton(interaction, store);
+    return;
+  }
+
+  if (interaction.isModalSubmit() && interaction.customId === SETUP_SETTINGS_MODAL_ID) {
+    await handleSetupSettingsModal(interaction, store);
     return;
   }
 
@@ -186,10 +217,16 @@ const isUnknownInteractionError = (error: unknown): boolean =>
   "code" in error &&
   (error as { code?: unknown }).code === 10062;
 
-const hasSetupPermission = (member: GuildMember, config: GuildConfig | null): boolean =>
+const hasSetupPermission = (member: GuildMember): boolean =>
   member.permissions.has(PermissionFlagsBits.ManageGuild) ||
-  member.permissions.has(PermissionFlagsBits.Administrator) ||
-  Boolean(config && isStoryteller(member, config));
+  member.permissions.has(PermissionFlagsBits.Administrator);
+
+const SETUP_COBWEB_CHANNEL_ID = "cwsetup:cobweb-channel";
+const SETUP_MODERATION_CHANNEL_ID = "cwsetup:moderation-channel";
+const SETUP_MALKAVIAN_ROLES_ID = "cwsetup:malkavian-roles";
+const SETUP_ST_ROLES_ID = "cwsetup:st-roles";
+const SETUP_SETTINGS_BUTTON_ID = "cwsetup:settings";
+const SETUP_SETTINGS_MODAL_ID = "cwsetup:settings-modal";
 
 const handleSetupCommand = async (
   interaction: ChatInputCommandInteraction,
@@ -201,152 +238,243 @@ const handleSetupCommand = async (
     return;
   }
 
-  const runnableConfig = store.getRunnableGuildConfig(interaction.guildId);
-  if (!hasSetupPermission(member, runnableConfig)) {
+  if (!hasSetupPermission(member)) {
     await respondEphemeral(interaction, {
-      content: "Only server managers or configured ST/admin roles can change Cobweb setup."
+      content: "Only server admins or users with Manage Server can change Cobweb setup."
     });
     return;
   }
 
-  const subcommandGroup = interaction.options.getSubcommandGroup(false);
-  const subcommand = interaction.options.getSubcommand();
-  let settings: GuildSettings;
+  const settings = store.ensureGuildSettings(interaction.guildId);
+  await respondEphemeral(interaction, await setupPanel(interaction.client, settings));
+};
 
-  if (subcommandGroup === "blocked-term") {
-    const term = interaction.options.getString("term", true);
-    settings =
-      subcommand === "add"
-        ? store.addBlockedTerm(interaction.guildId, term)
-        : store.removeBlockedTerm(interaction.guildId, term);
+const assertSetupPermission = async (interaction: Interaction): Promise<boolean> => {
+  const member = getGuildMember(interaction);
+  if (member && hasSetupPermission(member)) {
+    return true;
+  }
+
+  await respondEphemeral(interaction, {
+    content: "Only server admins or users with Manage Server can change Cobweb setup."
+  });
+  return false;
+};
+
+const handleSetupChannelSelect = async (
+  interaction: ChannelSelectMenuInteraction,
+  store: CobwebStore
+): Promise<void> => {
+  if (!interaction.guildId || !(await assertSetupPermission(interaction))) return;
+
+  const channelId = interaction.values[0];
+  if (!channelId) return;
+  await interaction.deferUpdate();
+  const field =
+    interaction.customId === SETUP_COBWEB_CHANNEL_ID
+      ? "cobwebChannelId"
+      : "moderationChannelId";
+  const settings = store.setGuildChannel(interaction.guildId, field, channelId);
+  await interaction.editReply(await setupPanel(interaction.client, settings, "Channel updated."));
+};
+
+const handleSetupRoleSelect = async (
+  interaction: RoleSelectMenuInteraction,
+  store: CobwebStore
+): Promise<void> => {
+  if (!interaction.guildId || !(await assertSetupPermission(interaction))) return;
+
+  await interaction.deferUpdate();
+  const field =
+    interaction.customId === SETUP_MALKAVIAN_ROLES_ID ? "malkavianRoleIds" : "stRoleIds";
+  const settings = store.setGuildRoles(interaction.guildId, field, interaction.values);
+  await interaction.editReply(await setupPanel(interaction.client, settings, "Roles updated."));
+};
+
+const handleSetupSettingsButton = async (
+  interaction: ButtonInteraction,
+  store: CobwebStore
+): Promise<void> => {
+  if (!interaction.guildId || !(await assertSetupPermission(interaction))) return;
+  const settings = store.ensureGuildSettings(interaction.guildId);
+  const modal = new ModalBuilder()
+    .setCustomId(SETUP_SETTINGS_MODAL_ID)
+    .setTitle("Cobweb limits & filters")
+    .addComponents(
+      textInputRow("max-length", "Maximum fragment length (20–200)", String(settings.maxLength)),
+      textInputRow("cooldown", "User cooldown in minutes (1–1440)", String(settings.cooldownMinutes)),
+      textInputRow("delay-window", "Random delay window in minutes (1–1440)", String(settings.delayWindowMinutes)),
+      textInputRow(
+        "blocked-terms",
+        "Blocked terms (one per line)",
+        settings.blockedTerms.join("\n"),
+        false,
+        TextInputStyle.Paragraph
+      )
+    );
+  await interaction.showModal(modal);
+};
+
+const textInputRow = (
+  customId: string,
+  label: string,
+  value: string,
+  required = true,
+  style = TextInputStyle.Short
+): ActionRowBuilder<TextInputBuilder> =>
+  new ActionRowBuilder<TextInputBuilder>().addComponents(
+    buildTextInput(customId, label, value, required, style)
+  );
+
+const buildTextInput = (
+  customId: string,
+  label: string,
+  value: string,
+  required: boolean,
+  style: TextInputStyle
+): TextInputBuilder => {
+  const input = new TextInputBuilder()
+    .setCustomId(customId)
+    .setLabel(label)
+    .setStyle(style)
+    .setRequired(required)
+    .setMaxLength(style === TextInputStyle.Paragraph ? 1000 : 4);
+  if (value) input.setValue(value);
+  return input;
+};
+
+const handleSetupSettingsModal = async (
+  interaction: ModalSubmitInteraction,
+  store: CobwebStore
+): Promise<void> => {
+  if (!interaction.guildId || !(await assertSetupPermission(interaction))) return;
+
+  const maxLength = parseSetupInteger(interaction.fields.getTextInputValue("max-length"), 20, 200);
+  const cooldown = parseSetupInteger(interaction.fields.getTextInputValue("cooldown"), 1, 1440);
+  const delayWindow = parseSetupInteger(
+    interaction.fields.getTextInputValue("delay-window"),
+    1,
+    1440
+  );
+  if (maxLength === null || cooldown === null || delayWindow === null) {
     await respondEphemeral(interaction, {
-      content: await formatSetupResponse(interaction, settings, `Blocked terms updated.`),
-      allowedMentions: { parse: [] }
+      content: "Use whole numbers in the displayed ranges for max length, cooldown, and delay window."
     });
     return;
   }
 
-  switch (subcommand) {
-    case "cobweb-channel": {
-      const channel = interaction.options.getChannel("channel", true);
-      settings = store.setGuildChannel(interaction.guildId, "cobwebChannelId", channel.id);
-      await respondEphemeral(interaction, {
-        content: await formatSetupResponse(
-          interaction,
-          settings,
-          `Cobweb channel set to <#${channel.id}>.`
-        ),
-        allowedMentions: { parse: [] }
-      });
-      return;
-    }
-    case "moderation-channel": {
-      const channel = interaction.options.getChannel("channel", true);
-      settings = store.setGuildChannel(interaction.guildId, "moderationChannelId", channel.id);
-      await respondEphemeral(interaction, {
-        content: await formatSetupResponse(
-          interaction,
-          settings,
-          `Moderation channel set to <#${channel.id}>.`
-        ),
-        allowedMentions: { parse: [] }
-      });
-      return;
-    }
-    case "malkavian-role": {
-      const role = interaction.options.getRole("role", true);
-      settings = store.addGuildRole(interaction.guildId, "malkavianRoleIds", role.id);
-      await respondEphemeral(interaction, {
-        content: await formatSetupResponse(
-          interaction,
-          settings,
-          `Malkavian role added: <@&${role.id}>.`
-        ),
-        allowedMentions: { parse: [] }
-      });
-      return;
-    }
-    case "st-role": {
-      const role = interaction.options.getRole("role", true);
-      settings = store.addGuildRole(interaction.guildId, "stRoleIds", role.id);
-      await respondEphemeral(interaction, {
-        content: await formatSetupResponse(
-          interaction,
-          settings,
-          `ST/admin role added: <@&${role.id}>.`
-        ),
-        allowedMentions: { parse: [] }
-      });
-      return;
-    }
-    case "max-length": {
-      const value = interaction.options.getInteger("characters", true);
-      settings = store.setGuildNumber(interaction.guildId, "maxLength", value);
-      await respondEphemeral(interaction, {
-        content: await formatSetupResponse(interaction, settings, `Max length set to ${value}.`),
-        allowedMentions: { parse: [] }
-      });
-      return;
-    }
-    case "cooldown": {
-      const value = interaction.options.getInteger("minutes", true);
-      settings = store.setGuildNumber(interaction.guildId, "cooldownMinutes", value);
-      await respondEphemeral(interaction, {
-        content: await formatSetupResponse(
-          interaction,
-          settings,
-          `Cooldown set to ${value} minutes.`
-        ),
-        allowedMentions: { parse: [] }
-      });
-      return;
-    }
-    case "delay-window": {
-      const value = interaction.options.getInteger("minutes", true);
-      settings = store.setGuildNumber(interaction.guildId, "delayWindowMinutes", value);
-      await respondEphemeral(interaction, {
-        content: await formatSetupResponse(
-          interaction,
-          settings,
-          `Delay window set to ${value} minutes.`
-        ),
-        allowedMentions: { parse: [] }
-      });
-      return;
-    }
-    case "show": {
-      settings = store.ensureGuildSettings(interaction.guildId);
-      await respondEphemeral(interaction, {
-        content: await formatSetupResponse(interaction, settings),
-        allowedMentions: { parse: [] }
-      });
-      return;
-    }
-    default:
-      await respondEphemeral(interaction, { content: "Unknown setup command." });
+  const blockedTerms = interaction.fields
+    .getTextInputValue("blocked-terms")
+    .split(/\r?\n/)
+    .map((term) => term.trim())
+    .filter(Boolean);
+  if (blockedTerms.some((term) => term.length > 100)) {
+    await respondEphemeral(interaction, {
+      content: "Each blocked term must be 100 characters or fewer."
+    });
+    return;
+  }
+
+  store.setGuildNumber(interaction.guildId, "maxLength", maxLength);
+  store.setGuildNumber(interaction.guildId, "cooldownMinutes", cooldown);
+  store.setGuildNumber(interaction.guildId, "delayWindowMinutes", delayWindow);
+  const settings = store.setBlockedTerms(interaction.guildId, blockedTerms);
+  if (interaction.isFromMessage()) {
+    await interaction.deferUpdate();
+    await interaction.editReply(
+      await setupPanel(interaction.client, settings, "Limits and filters saved.")
+    );
+  } else {
+    await respondEphemeral(
+      interaction,
+      await setupPanel(interaction.client, settings, "Limits and filters saved.")
+    );
   }
 };
 
+const parseSetupInteger = (value: string, minimum: number, maximum: number): number | null => {
+  if (!/^\d+$/.test(value.trim())) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null;
+};
+
+const setupPanel = async (
+  client: Client,
+  settings: GuildSettings,
+  prefix?: string
+): Promise<Omit<InteractionReplyOptions, "flags" | "ephemeral">> => {
+  const cobwebChannelSelect = new ChannelSelectMenuBuilder()
+    .setCustomId(SETUP_COBWEB_CHANNEL_ID)
+    .setPlaceholder("Choose the Cobweb feed channel")
+    .setChannelTypes(ChannelType.GuildText)
+    .setMinValues(1)
+    .setMaxValues(1);
+  const moderationChannelSelect = new ChannelSelectMenuBuilder()
+    .setCustomId(SETUP_MODERATION_CHANNEL_ID)
+    .setPlaceholder("Choose the Storyteller moderation channel")
+    .setChannelTypes(ChannelType.GuildText)
+    .setMinValues(1)
+    .setMaxValues(1);
+  const malkavianRoleSelect = new RoleSelectMenuBuilder()
+    .setCustomId(SETUP_MALKAVIAN_ROLES_ID)
+    .setPlaceholder("Choose one or more Malkavian roles")
+    .setMinValues(1)
+    .setMaxValues(25);
+  const stRoleSelect = new RoleSelectMenuBuilder()
+    .setCustomId(SETUP_ST_ROLES_ID)
+    .setPlaceholder("Choose one or more Storyteller/admin roles")
+    .setMinValues(1)
+    .setMaxValues(25);
+
+  if (settings.cobwebChannelId) cobwebChannelSelect.setDefaultChannels(settings.cobwebChannelId);
+  if (settings.moderationChannelId) {
+    moderationChannelSelect.setDefaultChannels(settings.moderationChannelId);
+  }
+  if (settings.malkavianRoleIds.length) {
+    malkavianRoleSelect.setDefaultRoles(...settings.malkavianRoleIds);
+  }
+  if (settings.stRoleIds.length) stRoleSelect.setDefaultRoles(...settings.stRoleIds);
+
+  return {
+    content: await formatSetupResponse(client, settings, prefix),
+    components: [
+      new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(cobwebChannelSelect),
+      new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(moderationChannelSelect),
+      new ActionRowBuilder<RoleSelectMenuBuilder>().addComponents(malkavianRoleSelect),
+      new ActionRowBuilder<RoleSelectMenuBuilder>().addComponents(stRoleSelect),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(SETUP_SETTINGS_BUTTON_ID)
+          .setLabel("Edit limits & blocked terms")
+          .setStyle(ButtonStyle.Primary)
+      )
+    ],
+    allowedMentions: { parse: [] }
+  };
+};
+
 const formatSetupResponse = async (
-  interaction: ChatInputCommandInteraction,
+  client: Client,
   settings: GuildSettings,
   prefix?: string
 ): Promise<string> => {
   const missing = setupMissingFields(settings);
   const cobwebChannel = settings.cobwebChannelId
-    ? await safeFetchGuildTextChannel(interaction.client, settings.cobwebChannelId)
+    ? await safeFetchGuildTextChannel(client, settings.cobwebChannelId)
     : null;
   const moderationChannel = settings.moderationChannelId
-    ? await safeFetchGuildTextChannel(interaction.client, settings.moderationChannelId)
+    ? await safeFetchGuildTextChannel(client, settings.moderationChannelId)
     : null;
   const cobwebDiagnostic = settings.cobwebChannelId
-    ? formatChannelDiagnostic(diagnoseCobwebChannel(cobwebChannel, interaction.client.user))
+    ? formatChannelDiagnostic(diagnoseCobwebChannel(cobwebChannel, client.user))
     : "Cobweb permissions: channel not set";
   const moderationDiagnostic = settings.moderationChannelId
-    ? formatChannelDiagnostic(diagnoseModerationChannel(moderationChannel, interaction.client.user))
+    ? formatChannelDiagnostic(diagnoseModerationChannel(moderationChannel, client.user))
     : "Moderation permissions: channel not set";
   const lines = [
     ...(prefix ? [prefix, ""] : []),
+    "Use the menus below to configure this server. Changes save immediately.",
+    "",
     "Cobweb setup:",
     `Cobweb channel: ${settings.cobwebChannelId ? `<#${settings.cobwebChannelId}>` : "not set"}`,
     `Moderation channel: ${

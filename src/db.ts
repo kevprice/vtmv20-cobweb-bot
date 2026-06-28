@@ -209,6 +209,21 @@ export class CobwebStore {
     return this.getGuildSettings(guildId)!;
   }
 
+  setGuildRoles(
+    guildId: string,
+    field: "malkavianRoleIds" | "stRoleIds",
+    roleIds: string[],
+    now = new Date()
+  ): GuildSettings {
+    this.ensureGuildSettings(guildId, now);
+    const column = field === "malkavianRoleIds" ? "malkavian_role_ids" : "st_role_ids";
+    const uniqueRoleIds = [...new Set(roleIds)];
+    this.db
+      .prepare(`UPDATE guild_settings SET ${column} = ?, updated_at = ? WHERE guild_id = ?`)
+      .run(JSON.stringify(uniqueRoleIds), isoNow(now), guildId);
+    return this.getGuildSettings(guildId)!;
+  }
+
   setGuildNumber(
     guildId: string,
     field: "maxLength" | "cooldownMinutes" | "delayWindowMinutes",
@@ -250,6 +265,24 @@ export class CobwebStore {
     this.db
       .prepare("UPDATE guild_settings SET blocked_terms = ?, updated_at = ? WHERE guild_id = ?")
       .run(JSON.stringify(nextTerms), isoNow(now), guildId);
+    return this.getGuildSettings(guildId)!;
+  }
+
+  setBlockedTerms(guildId: string, terms: string[], now = new Date()): GuildSettings {
+    this.ensureGuildSettings(guildId, now);
+    const uniqueTerms = terms.reduce<string[]>((result, term) => {
+      const normalized = term.trim();
+      if (
+        normalized &&
+        !result.some((existing) => existing.toLocaleLowerCase() === normalized.toLocaleLowerCase())
+      ) {
+        result.push(normalized);
+      }
+      return result;
+    }, []);
+    this.db
+      .prepare("UPDATE guild_settings SET blocked_terms = ?, updated_at = ? WHERE guild_id = ?")
+      .run(JSON.stringify(uniqueTerms), isoNow(now), guildId);
     return this.getGuildSettings(guildId)!;
   }
 

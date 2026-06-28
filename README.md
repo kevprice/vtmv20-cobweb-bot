@@ -44,15 +44,7 @@ Cobweb is a Discord bot for a VTM V20 Malkavian-only feed: short anonymous fragm
 5. In each Discord server, a user with `Manage Server` or `Administrator` runs:
 
    ```text
-   /cwsetup cobweb-channel channel:#cobweb
-   /cwsetup moderation-channel channel:#cobweb-mod
-   /cwsetup malkavian-role role:@Malkavian
-   /cwsetup st-role role:@Storyteller
-   /cwsetup max-length characters:180
-   /cwsetup cooldown minutes:15
-   /cwsetup delay-window minutes:60
-   /cwsetup blocked-term add term:"Victor Temple"
-   /cwsetup show
+   /cwsetup
    ```
 
 ## Discord Permissions
@@ -70,7 +62,7 @@ For the moderation channel:
 
 Discord always displays some sender label. Cobweb uses a webhook named `Cobweb` so the feed never shows the player or ST who submitted the fragment.
 If queued fragments change to `FAILED` at publish time, first verify the bot has `Manage Webhooks` in the configured Cobweb channel and that the channel still exists.
-`/cwsetup show` reports Cobweb and moderation channel permission health, including missing `Manage Webhooks`, `Send Messages`, `View Channel`, or `Read Message History`.
+`/cwsetup` opens a private setup panel with channel and multi-role pickers. Its limits and filters button configures message length, cooldown, delay window, and blocked terms. The panel also reports channel permission health, including missing `Manage Webhooks`, `Send Messages`, `View Channel`, or `Read Message History`.
 
 ST/admin submissions are not slow-posted unless the ST chooses a delay with `delay-minutes`. Omitting `delay-minutes` or setting it to `0` queues the fragment for immediate publish after the moderation entry is created.
 
@@ -90,7 +82,7 @@ WORKER_INTERVAL_MS=30000
 Per-server configuration is stored in SQLite, keyed by `guildId`, and managed with `/cwsetup`.
 The database stores channel IDs, role IDs, limits, cooldowns, delay windows, webhook credentials, and blocked terms.
 
-`/cwsetup blocked-term add` is a light guardrail for character names. It rejects submissions containing configured terms before they enter the queue.
+The blocked terms field in `/cwsetup` is a light guardrail for character names. It rejects submissions containing configured terms before they enter the queue.
 
 ## Development
 
