@@ -93,7 +93,7 @@ export const startBot = async (config: AppConfig, store: CobwebStore): Promise<C
       await handleCobwebChannelMessage(message, store, worker);
     } catch (error) {
       console.error("Cobweb channel message interception failed", error);
-      await safeDirectMessage(
+      await safeChannelNotice(
         message,
         "The Cobweb could not take that message. Please try `/cobweb` instead."
       );
@@ -129,7 +129,7 @@ const handleCobwebChannelMessage = async (
     await message.delete();
   } catch (error) {
     console.error(`Could not delete intercepted Cobweb message ${message.id}`, error);
-    await safeDirectMessage(
+    await safeChannelNotice(
       message,
       "I could not hide your message, so it was not added to the Cobweb queue. Please alert a Storyteller."
     );
@@ -150,14 +150,14 @@ const handleCobwebChannelMessage = async (
     message.createdAt
   );
   if (!result.ok) {
-    await safeDirectMessage(message, result.reason);
+    await safeChannelNotice(message, result.reason);
     return;
   }
 
   const moderationChannel = await fetchGuildTextChannel(message.client, config.moderationChannelId);
   if (!moderationChannel) {
     store.deleteQueuedMessage(result.queued.id);
-    await safeDirectMessage(
+    await safeChannelNotice(
       message,
       "The moderation channel is unavailable, so your message was not queued."
     );
@@ -175,7 +175,7 @@ const handleCobwebChannelMessage = async (
     await worker.tick(new Date());
   }
 
-  await safeDirectMessage(
+  await safeChannelNotice(
     message,
     storyteller
       ? "The Cobweb has taken your Storyteller message and queued it for immediate publication."
@@ -183,12 +183,42 @@ const handleCobwebChannelMessage = async (
   );
 };
 
-const safeDirectMessage = async (message: Message, content: string): Promise<void> => {
+const NOTICE_CUSTOM_ID_PREFIX = "cobweb:notice:";
+const NOTICE_LIFETIME_MS = 60_000;
+
+const safeChannelNotice = async (message: Message, content: string): Promise<void> => {
   try {
-    await message.author.send({ content, allowedMentions: { parse: [] } });
+    if (!message.channel.isSendable()) return;
+    const notice = await message.channel.send({
+      content,
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`${NOTICE_CUSTOM_ID_PREFIX}${message.author.id}`)
+            .setLabel("Dismiss")
+            .setStyle(ButtonStyle.Secondary)
+        )
+      ],
+      allowedMentions: { parse: [] }
+    });
+    const timeout = setTimeout(() => {
+      void notice.delete().catch(() => undefined);
+    }, NOTICE_LIFETIME_MS);
+    timeout.unref();
   } catch {
-    // Direct messages may be disabled; interception and queueing should still succeed.
+    // A notice is helpful but should never prevent interception or queueing.
   }
+};
+
+const handleNoticeDismiss = async (interaction: ButtonInteraction): Promise<void> => {
+  const ownerId = interaction.customId.slice(NOTICE_CUSTOM_ID_PREFIX.length);
+  if (interaction.user.id !== ownerId) {
+    await respondEphemeral(interaction, { content: "Only the person who submitted this can dismiss it." });
+    return;
+  }
+
+  await interaction.deferUpdate();
+  await interaction.message.delete();
 };
 
 const handleInteraction = async (
@@ -243,6 +273,11 @@ const handleInteraction = async (
 
   if (interaction.isModalSubmit() && interaction.customId === SETUP_SETTINGS_MODAL_ID) {
     await handleSetupSettingsModal(interaction, store);
+    return;
+  }
+
+  if (interaction.isButton() && interaction.customId.startsWith(NOTICE_CUSTOM_ID_PREFIX)) {
+    await handleNoticeDismiss(interaction);
     return;
   }
 

@@ -18,6 +18,7 @@ Invite the bot into #cobweb and cobweb-mod
 - Messages typed by Malkavian players directly in the configured Cobweb channel are deleted and submitted through the same queue automatically.
 - `/cobweb_st message:<text> delay-minutes?:<number>` for ST/admin roles.
 - Messages typed by Storytellers in either the Cobweb or moderation channel are deleted and treated like immediate `/cobweb_st` submissions.
+- Direct-message acknowledgements are never sent; intercepted posts produce a dismissible channel notice that automatically disappears after one minute.
 - Random scheduling within the next configured hour.
 - Player per-user cooldown, defaulting to one submission every 15 minutes.
 - ST/admin posts bypass cooldown and can post immediately or after a chosen delay.
