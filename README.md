@@ -2,6 +2,20 @@
 
 Cobweb is a Discord bot for a VTM V20 Malkavian-only feed: short anonymous fragments, delayed delivery, and an admin moderation queue before the words reach the channel.
 
+
+## standard discord setup, create the private channels #cobweb and #cobweb-mod 
+## install the bot and have an admin or moderator run the following slash commands:
+```
+/cwsetup cobweb-channel channel:#cobweb
+/cwsetup moderation-channel channel:#cobweb-mod
+/cwsetup malkavian-role role:@Malkavian
+/cwsetup st-role role:@Storyteller
+/cwsetup show
+```
+
+Replace the tags and channel names with whatever you are using
+Invite the bot into #cobweb and cobweb-mod
+
 ## Features
 
 - `/cobweb message:<text>` for Malkavian players and ST/admin roles.
